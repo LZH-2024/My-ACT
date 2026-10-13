@@ -5,5 +5,4 @@ pyarrow==26.0.0 # Arrow 与 Parquet 数据读写
 PyYAML==6.0.3 # YAML 配置文件读写
 imageio==2.38.0 # 图像与视频读写接口
 imageio-ffmpeg==0.6.0 # 视频编解码所需 FFmpeg 支持
-huggingface-hub==2.2.0 # 从官方指定的 Hugging Face 数据源下载文件
-h5py==3.16.0 # 查看和读取原始 HDF5 示范数据
+huggingface-hub==2.2.0 # 下载 Hugging Face 数据仓库的完整快照
