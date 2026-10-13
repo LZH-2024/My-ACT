@@ -1,0 +1,12 @@
+[build-system] # 包构建配置
+requires = ["setuptools>=64"] # 支持可编辑安装的构建依赖
+build-backend = "setuptools.build_meta" # 使用 setuptools 构建后端
+
+[project] # 项目基本信息；运行依赖由 requirements/ 管理
+name = "my-act" # 项目名称
+version = "0.1.0" # 项目版本
+description = "用于学习与实验的 PyTorch ACT 实现" # 项目说明
+requires-python = ">=3.10" # 最低 Python 版本
+
+[tool.setuptools.packages.find] # 自动发现 Python 包
+where = ["src"] # 从 src 目录发现包
