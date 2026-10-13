@@ -1,0 +1,5 @@
+# NVIDIA GPU 方案：适用于 Linux，与 cpu.txt 二选一，并安装 base.txt。
+# 使用 CUDA 13.0 构建；=== 精确匹配 PyPI 发行版本。
+--index-url https://pypi.org/simple
+torch===2.11.0 # PyTorch CUDA 13.0 构建
+torchvision===0.26.0 # 与 PyTorch 2.11.0 配套的视觉组件

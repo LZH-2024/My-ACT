@@ -1,0 +1,7 @@
+# 公共依赖
+numpy==2.2.6 # 数值数组与基础计算
+pandas==2.3.3 # 表格数据读取与整理
+pyarrow==26.0.0 # Arrow 与 Parquet 数据读写
+PyYAML==6.0.3 # YAML 配置文件读写
+imageio==2.38.0 # 图像与视频读写接口
+imageio-ffmpeg==0.6.0 # 视频编解码所需 FFmpeg 支持
