@@ -62,3 +62,13 @@ class CVAEEncoder(nn.Module):  # 根据当前状态与示范动作块编码潜�
         parameters = self.distribution_projection(cls_output)  # 预测 [B, 2*latent_dim] 的原始分布参数
         mu, logvar = parameters.chunk(2, dim=-1)  # 沿最后一维拆分均值和自然对数方差，不添加裁剪或激活
         return mu, logvar  # 返回后验参数，不采样潜变量或计算 KL
+
+
+def reparameterize(  # 使用重参数化方法采样潜变量
+    mu: torch.Tensor,  # 潜变量均值，形状为 [B, latent_dim]
+    logvar: torch.Tensor,  # 潜变量的自然对数方差，形状为 [B, latent_dim]
+) -> torch.Tensor:  # 返回同形状的潜变量样本
+    """始终采样 [B, latent_dim] 潜变量，保留到 mu、logvar 的梯度路径，不修改输入或根据训练状态切换行为。"""  # 函数说明
+    std = torch.exp(0.5 * logvar)  # 从自然对数方差计算标准差
+    eps = torch.randn_like(std)  # 生成与标准差形状、设备和类型一致的标准正态噪声
+    return mu + std * eps  # 平移并缩放噪声，保留可微的重参数化路径
