@@ -39,3 +39,12 @@ class LiberoSource:  # 定义 LIBERO 数据源
             "action": np.stack(episode["action"].to_numpy()).astype(np.float32),  # 堆叠为 [T, A] 的 float32 动作数组
             "timestamp": episode["timestamp"].to_numpy(dtype=np.float64),  # 转换为 [T] 的 float64 时间戳数组
         }  # 完成返回字典
+
+    def get_episode_indices(self, task_index: int) -> list[int]:  # 获取指定任务的全部轨迹编号
+        """按任务编号筛选轨迹，返回去重后升序排列的整数编号列表。"""  # 方法说明
+        episode_indices = set()  # 用集合去除重复的轨迹编号
+        for path in sorted((self.root / "data").rglob("*.parquet")):  # 按路径排序遍历数据目录下的 Parquet 文件
+            data = pd.read_parquet(path, columns=["episode_index", "task_index"])  # 每个文件只读取轨迹编号和任务编号
+            selected = data.loc[data["task_index"] == task_index, "episode_index"]  # 取出属于目标任务的轨迹编号
+            episode_indices.update(int(index) for index in selected)  # 转换为 Python 整数并加入集合去重
+        return sorted(episode_indices)  # 返回升序排列的轨迹编号列表
