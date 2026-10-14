@@ -48,3 +48,23 @@ class LiberoSource:  # 定义 LIBERO 数据源
             selected = data.loc[data["task_index"] == task_index, "episode_index"]  # 取出属于目标任务的轨迹编号
             episode_indices.update(int(index) for index in selected)  # 转换为 Python 整数并加入集合去重
         return sorted(episode_indices)  # 返回升序排列的轨迹编号列表
+
+    def get_video_location(  # 定位指定相机的视频文件及文件内时间
+        self,  # 当前数据源实例
+        episode_index: int,  # 目标轨迹编号
+        camera_key: str,  # 配置中的完整相机字段名称
+        timestamp: float,  # read_episode 返回的轨迹内时间戳，单位为秒
+    ) -> tuple[Path, float]:  # 返回视频路径及 Python 浮点数时间
+        """将轨迹内的秒级时间戳加上指定相机的片段起点，定位视频文件；timestamp 不是帧编号。"""  # 方法说明
+        metadata = self.episode_metadata[episode_index]  # 取得目标轨迹的元数据
+        prefix = f"videos/{camera_key}"  # 使用完整相机字段定位该相机自己的元数据
+        chunk_index = int(metadata[f"{prefix}/chunk_index"])  # 读取该相机的视频块编号并转为整数
+        file_index = int(metadata[f"{prefix}/file_index"])  # 读取该相机的视频文件编号并转为整数
+        video_path = self.root / self.info["video_path"].format(  # 按元数据中的模板拼出视频路径
+            video_key=camera_key,  # 将完整相机字段填入 video_key
+            chunk_index=chunk_index,  # 填入该相机的视频块编号
+            file_index=file_index,  # 填入该相机的视频文件编号
+        )  # 完成视频路径拼接，结果为 Path
+        from_timestamp = float(metadata[f"{prefix}/from_timestamp"])  # 读取该相机的片段起始时间并转为 Python float
+        video_timestamp = from_timestamp + float(timestamp)  # 加上轨迹内时间，得到视频文件内的秒级时间
+        return video_path, video_timestamp  # 返回路径和 Python float 时间，不读取或解码视频
