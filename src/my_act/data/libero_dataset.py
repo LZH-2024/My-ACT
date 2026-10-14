@@ -1,4 +1,5 @@
 import json  # 读取 JSON 格式的数据集信息
+from collections import OrderedDict  # 按最近使用顺序保存有限数量的视频解码器
 from pathlib import Path  # 表示数据目录和元数据文件路径
 
 import numpy as np  # 堆叠状态与动作，并指定数组的数据类型
@@ -8,12 +9,14 @@ from torchcodec.decoders import VideoDecoder  # 使用 TorchCodec 解码视频�
 
 
 class LiberoSource:  # 定义 LIBERO 数据源
-    """保存数据集信息、相机顺序和整个数据集的轨迹元数据索引。"""  # 类说明
+    """保存数据集信息、相机顺序和轨迹元数据索引；解码器缓存仅用于 num_workers=0 的主进程串行加载，未来启用多进程前需单独处理每个进程的解码器生命周期。"""  # 类说明
 
     def __init__(self, task: dict) -> None:  # 接收任务配置字典并初始化数据源
         """从配置指定的相对目录读取数据集信息和全部轨迹元数据。"""  # 构造函数说明
         self.root = Path(task["dataset"]["root"])  # 直接使用相对于项目根目录的数据路径
         self.camera_keys = task["dataset"]["camera_keys"]  # 保持配置中的相机顺序
+        self.video_decoders = OrderedDict()  # 以完整视频 Path 为键，只缓存解码器，不缓存图像或整段视频
+        self.max_video_decoders = 4  # 当前小规模实验的初始容量选择，不代表最优值
         with (self.root / "meta" / "info.json").open("r", encoding="utf-8") as file:  # 以 UTF-8 打开数据集信息文件
             self.info = json.load(file)  # 保存数据格式、特征等数据集信息
         self.episode_metadata = {}  # 保存整个数据集的轨迹元数据，以轨迹编号作为键
@@ -71,6 +74,22 @@ class LiberoSource:  # 定义 LIBERO 数据源
         video_timestamp = from_timestamp + float(timestamp)  # 加上轨迹内时间，得到视频文件内的秒级时间
         return video_path, video_timestamp  # 返回路径和 Python float 时间，不读取或解码视频
 
+    def _get_video_decoder(self, video_path: Path) -> VideoDecoder:  # 获取指定视频路径的解码器
+        """命中时复用并更新最近使用顺序，未命中时先淘汰最久未使用项；移除只释放缓存引用，不保证系统内存立即下降。"""  # 方法说明
+        if video_path in self.video_decoders:  # 检查完整视频路径是否已缓存
+            self.video_decoders.move_to_end(video_path)  # 将本次使用的条目移到末尾
+            return self.video_decoders[video_path]  # 返回已有解码器对象
+        if len(self.video_decoders) >= self.max_video_decoders:  # 创建新解码器前检查缓存容量
+            self.video_decoders.popitem(last=False)  # 移除最久未使用的条目，仅释放缓存持有的引用
+        decoder = VideoDecoder(  # 为尚未缓存的视频创建 CPU 解码器
+            video_path,  # 使用视频定位方法返回的完整路径
+            dimension_order="NCHW",  # 单帧按通道、高度、宽度排列
+            device="cpu",  # 在 CPU 上解码并返回张量
+            seek_mode="exact",  # 保持精确定位模式
+        )  # 完成解码器创建
+        self.video_decoders[video_path] = decoder  # 将新解码器加入末尾，标记为最近使用
+        return decoder  # 返回新建的解码器
+
     def read_images(  # 按配置中的相机顺序读取同一时刻的图像
         self,  # 当前数据源实例
         episode_index: int,  # 目标轨迹编号
@@ -80,12 +99,7 @@ class LiberoSource:  # 定义 LIBERO 数据源
         images = []  # 按相机顺序收集各路图像
         for camera_key in self.camera_keys:  # 保持任务配置中的相机输入顺序
             video_path, video_timestamp = self.get_video_location(episode_index, camera_key, timestamp)  # 定位该相机的视频文件和文件内时间
-            decoder = VideoDecoder(  # 每次为当前相机创建 CPU 解码器
-                video_path,  # 读取定位得到的视频路径
-                dimension_order="NCHW",  # 单帧按通道、高度、宽度排列
-                device="cpu",  # 在 CPU 上解码并返回张量
-                seek_mode="exact",  # 使用精确定位模式
-            )  # 完成解码器创建
+            decoder = self._get_video_decoder(video_path)  # 获取或复用该视频路径的 CPU 解码器
             frame = decoder.get_frame_played_at(seconds=video_timestamp)  # 读取指定视频时间正在显示的帧
             images.append(frame.data)  # 保存原始 RGB uint8 图像，不缩放或归一化
         return torch.stack(images)  # 沿相机维堆叠为 [C, 3, H, W]
