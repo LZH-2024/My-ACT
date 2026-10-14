@@ -151,3 +151,50 @@ class TransformerDecoderLayer(nn.Module):  # 定义单层 Transformer 解码器
         ff = self.linear2(self.dropout_ff(self.relu(self.linear1(tgt))))  # 依次执行线性映射、ReLU、Dropout 和线性映射
         tgt = self.norm3(tgt + self.dropout3(ff))  # 前馈输出经 Dropout 与残差相加，再归一化
         return tgt  # 返回全部 K 个动作查询的内容特征
+
+
+class TransformerDecoder(nn.Module):  # 定义由独立解码器层组成的多层解码器
+    """各层内部采用 Post-LayerNorm，最后一层输出再经一次 LayerNorm，只返回最终动作查询特征。"""  # 类说明
+
+    def __init__(  # 初始化解码器层列表和最终归一化
+        self,  # 当前解码器实例
+        hidden_dim: int,  # 特征维度 D
+        nheads: int,  # 每层注意力的头数
+        dim_feedforward: int,  # 每层前馈网络的中间维度
+        dropout: float,  # 每层使用的丢弃概率
+        num_layers: int,  # 解码器层数
+    ) -> None:  # 构造函数不返回数据
+        """每次循环新建一个独立解码器层并注册到 ModuleList，另设末尾 LayerNorm。"""  # 构造函数说明
+        super().__init__()  # 初始化 PyTorch 模块
+        self.layers = nn.ModuleList()  # 注册并保存全部解码器层
+        for _ in range(num_layers):  # 按指定层数逐层创建模块
+            self.layers.append(  # 将新建的层加入模块列表
+                TransformerDecoderLayer(  # 每次创建新对象，避免各层意外共享参数
+                    hidden_dim=hidden_dim,  # 设置特征维度
+                    nheads=nheads,  # 设置注意力头数
+                    dim_feedforward=dim_feedforward,  # 设置前馈中间维度
+                    dropout=dropout,  # 设置丢弃概率
+                )  # 完成当前解码器层创建
+            )  # 完成当前层注册
+        self.norm = nn.LayerNorm(hidden_dim)  # 对最后一层输出执行最终归一化
+
+    def forward(  # 顺序执行多层解码和最终归一化
+        self,  # 当前解码器实例
+        tgt: torch.Tensor,  # 调用方提供的动作查询内容，形状为 [B, K, D]
+        memory: torch.Tensor,  # 各层共用的编码器输出，形状为 [B, L, D]
+        pos: torch.Tensor,  # 可广播到 [B, L, D] 的 memory 位置编码
+        query_pos: torch.Tensor,  # 可广播到 [B, K, D] 的动作查询位置编码
+        memory_key_padding_mask: torch.Tensor | None = None,  # 各层共用的 [B, L] bool 掩码，True 屏蔽 memory 的 key/value
+    ) -> torch.Tensor:  # 返回 [B, K, D] 的最终特征
+        """逐层传递查询内容及同一份 memory、位置编码和掩码，不提前加入位置编码，不修改输入。"""  # 前向方法说明
+        output = tgt  # 将传入的查询内容作为初始输出，不在此初始化查询
+        for layer in self.layers:  # 按注册顺序遍历各个独立解码器层
+            output = layer(  # 用上一层输出更新当前查询内容
+                output,  # 传入上一层动作查询特征
+                memory,  # 向每层传入同一份编码器输出
+                pos,  # 向每层传入同一份 memory 位置编码
+                query_pos,  # 向每层传入同一份动作查询位置编码
+                memory_key_padding_mask=memory_key_padding_mask,  # 向每层传入 memory 掩码
+            )  # 完成当前层解码
+        output = self.norm(output)  # 对最后一层输出再执行一次 LayerNorm
+        return output  # 仅返回最终动作查询特征
