@@ -1,0 +1,19 @@
+# LIBERO 仿真依赖；公共依赖继续由 base.txt 管理。
+# 安装时指定 --src data/sim_sources，将第三方源码保存在忽略目录。
+-e git+https://github.com/Lifelong-Robot-Learning/LIBERO.git@8f1084e3132a39270c3a13ebe37270a43ece2a01#egg=libero --config-settings editable_mode=compat # 固定官方源码，兼容命名空间目录的可编辑安装
+
+robosuite==1.4.0 # 机器人环境与控制器
+mujoco==3.3.2 # 物理仿真引擎
+numba==0.61.2 # 控制器数值运算编译
+scipy==1.15.3 # 科学计算支持
+opencv-python==4.11.0.86 # 图像处理支持
+h5py==3.13.0 # 仿真工具的 HDF5 支持
+matplotlib==3.10.1 # 环境导入所需的颜色映射
+easydict==1.13 # 物体属性字典
+bddl==1.0.1 # 任务描述解析
+gym==0.25.2 # LIBERO 环境接口
+cloudpickle==3.1.1 # 环境对象序列化支持
+future==1.0.0 # BDDL 兼容支持
+PyOpenGL==3.1.9 # 无窗口 OpenGL 接口
+glfw==2.9.0 # MuJoCo 窗口库依赖
+termcolor==2.5.0 # Robosuite 日志颜色支持
