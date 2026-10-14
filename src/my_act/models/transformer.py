@@ -50,3 +50,40 @@ class TransformerEncoderLayer(nn.Module):  # 定义单层 Transformer 编码器
         ff = self.linear2(self.dropout_ff(self.relu(self.linear1(src))))  # 依次执行线性映射、ReLU、Dropout 和线性映射
         src = self.norm2(src + self.dropout2(ff))  # 前馈输出经 Dropout 与残差相加，再归一化
         return src  # 返回编码结果，不原地修改传入张量
+
+
+class TransformerEncoder(nn.Module):  # 定义由独立编码器层组成的多层编码器
+    """顺序堆叠 Post-LayerNorm 编码器层，每层接收相同的位置编码和 padding mask，不额外添加末尾归一化。"""  # 类说明
+
+    def __init__(  # 初始化多层编码器
+        self,  # 当前编码器实例
+        hidden_dim: int,  # 特征维度 D
+        nheads: int,  # 每层多头注意力的头数
+        dim_feedforward: int,  # 每层前馈网络的中间维度
+        dropout: float,  # 每层使用的丢弃概率
+        num_layers: int,  # 编码器层数
+    ) -> None:  # 构造函数不返回数据
+        """使用 ModuleList 注册各层，每次循环新建一层，使各层拥有独立参数。"""  # 构造函数说明
+        super().__init__()  # 初始化 PyTorch 模块
+        self.layers = nn.ModuleList()  # 使用模块列表保存并注册所有编码器层
+        for _ in range(num_layers):  # 按指定层数逐层创建模块
+            self.layers.append(  # 将新建的独立层加入模块列表
+                TransformerEncoderLayer(  # 每次循环创建新的编码器层对象
+                    hidden_dim=hidden_dim,  # 设置特征维度
+                    nheads=nheads,  # 设置注意力头数
+                    dim_feedforward=dim_feedforward,  # 设置前馈中间维度
+                    dropout=dropout,  # 设置丢弃概率
+                )  # 完成当前层创建
+            )  # 完成当前层注册
+
+    def forward(  # 按顺序执行所有编码器层
+        self,  # 当前编码器实例
+        src: torch.Tensor,  # 输入特征，形状为 [B, L, D]
+        pos: torch.Tensor,  # 每层共用的位置编码，可广播到输入形状
+        src_key_padding_mask: torch.Tensor | None = None,  # 每层共用的 [B, L] bool 掩码，True 屏蔽 key/value
+    ) -> torch.Tensor:  # 返回 [B, L, D] 的最终编码特征
+        """逐层传递特征，并将同一份位置编码和 padding mask 交给每一层；只返回最后一层输出。"""  # 前向方法说明
+        output = src  # 将原始特征作为初始输出，不提前加入位置编码
+        for layer in self.layers:  # 按注册顺序遍历独立的编码器层
+            output = layer(output, pos, src_key_padding_mask=src_key_padding_mask)  # 传入上一层输出与相同的位置编码和掩码
+        return output  # 返回最终特征，不再添加 LayerNorm
