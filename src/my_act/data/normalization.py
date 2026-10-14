@@ -21,3 +21,13 @@ def compute_stats(source: LiberoSource, episode_indices: list[int]) -> dict:  # 
         "state": {"mean": state_mean, "std": state_std},  # 状态均值与标准差，形状均为 [S]
         "action": {"mean": action_mean, "std": action_std},  # 动作均值与标准差，形状均为 [A]
     }  # 完成返回字典
+
+
+def normalize(values: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:  # 将状态或动作数组归一化
+    """用 [D] 统计量广播处理 [D]、[T, D] 或 [B, T, D] 输入；D 为状态或动作维度，不修改输入。"""  # 函数说明
+    return ((values - mean) / std).astype(np.float32)  # 使用已限制下限的标准差进行变换，并返回新的 float32 数组
+
+
+def denormalize(values: np.ndarray, mean: np.ndarray, std: np.ndarray) -> np.ndarray:  # 将归一化后的状态或动作还原
+    """用 [D] 统计量广播还原 [D]、[T, D] 或 [B, T, D] 输入；D 为状态或动作维度，不修改输入。"""  # 函数说明
+    return (values * std + mean).astype(np.float32)  # 按原统计量还原数值，并返回新的 float32 数组
