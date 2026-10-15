@@ -3,16 +3,15 @@ import torch.nn.functional as F  # 使用双线性插值缩放各相机图像
 from torch.utils.data import Dataset  # 使用 PyTorch 数据集基类
 
 from my_act.data.action_chunk import make_action_chunk  # 复用动作块截取与补齐功能
-from my_act.data.libero_dataset import LiberoSource  # 使用现有数据源读取轨迹
 from my_act.data.normalization import normalize  # 复用归一化函数
 
 
-class ACTDataset(Dataset):  # 定义包含双相机图像、状态和动作块的 ACT 数据集
+class ACTDataset(Dataset):  # 定义包含相机图像、状态和动作块的 ACT 数据集
     """每帧对应图像、状态和动作块起点一致的样本；frame_index 是轨迹数组中的位置，包含轨迹末尾不足动作块长度的帧。"""  # 类说明
 
     def __init__(  # 初始化并预加载传入轨迹的状态、动作与原始时间戳
         self,  # 当前数据集实例
-        source: LiberoSource,  # 已初始化的数据源
+        source,  # 数据源需提供 read_episode(index) 和 read_images(index, timestamp)
         episode_indices: list[int],  # 调用方划分好的轨迹编号
         stats: dict,  # 调用方仅用训练集计算的统计量
         chunk_size: int,  # 动作块长度 K

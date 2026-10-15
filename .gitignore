@@ -37,3 +37,8 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# 本地硬件与校准配置
+/configs/local/
+/calibration/
+/calibrations/

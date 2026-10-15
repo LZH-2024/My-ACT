@@ -11,7 +11,6 @@ import yaml  # 保存实际运行配置
 from torch.utils.data import DataLoader, Subset  # 加载数据及选择演示样本
 
 from my_act.config import read_yaml  # 读取已有实验配置
-from my_act.data.libero_dataset import LiberoSource  # 创建真实数据源
 from my_act.data.dataset import ACTDataset  # 复用图像、状态与动作块数据集
 from my_act.models.act import ACT  # 复用完整 ACT 模型
 from my_act.models.losses import compute_act_loss  # 复用后验训练损失
@@ -19,13 +18,15 @@ from my_act.training.evaluate import evaluate  # 复用零潜变量离线验证
 from my_act.training.checkpoint import save_checkpoint  # 复用模型与优化器状态保存
 
 
-def main() -> None:  # 从项目根目录启动指定实验的一次新运行
-    """复用实验划分与统计量，使用启动方目录或自行创建新目录；拒绝覆盖训练产物，smoke-test 仅演示三步流程，不支持恢复训练。"""  # 函数说明
+def main(source=None) -> None:  # 从项目根目录启动指定实验的一次新运行
+    """调用方须传入与任务配置对应的真实数据源；复用实验划分与统计量，使用启动方目录或自行创建新目录；拒绝覆盖训练产物，smoke-test 仅演示三步流程，不支持恢复训练。"""  # 函数说明
     parser = argparse.ArgumentParser(description="ACT 训练入口与三步流程演示")  # 创建命令行参数解析器
     parser.add_argument("--experiment-dir", required=True, help="prepare_training.py 已生成的实验目录")  # 必须明确指定实验目录
     parser.add_argument("--smoke-test", action="store_true", help="仅用少量样本执行三步流程演示")  # 默认不启用流程演示
     parser.add_argument("--run-dir", help="启动方已创建的运行目录；省略时自行创建新目录")  # 允许复用本次启动的日志目录，但不覆盖训练结果
     args = parser.parse_args()  # 读取本次入口参数
+    if source is None:  # 尚未接入真实的 SO101 数据源，拒绝产生实验或训练产物
+        parser.error("SO101 数据源尚未实现；当前仅支持 --help。接入真实数据源后才能准备实验或训练。")  # 明确报告缺失适配，不使用假数据
     experiment_dir = Path(args.experiment_dir)  # 使用调用方给定路径，不自动搜索最新实验
     print("experiment_dir:", experiment_dir.resolve(), flush=True)  # 明确打印所用实验目录
     if args.run_dir is not None:  # 启动方负责创建目录时，不再生成时间戳
@@ -42,7 +43,6 @@ def main() -> None:  # 从项目根目录启动指定实验的一次新运行
     if existing:  # 检测到任何已有训练产物时停止，不加载数据或模型
         parser.error("运行目录已有训练产物，拒绝覆盖：" + ", ".join(str(path) for path in existing))  # 保留原有运行内容
     model_config = read_yaml(experiment_dir / "model_config.yaml")  # 读取保存的完整模型配置
-    task_config = read_yaml(experiment_dir / "task_config.yaml")  # 读取保存的任务配置
     train_config = read_yaml(experiment_dir / "train_config.yaml")  # 读取保存的训练配置
     with (experiment_dir / "split.json").open("r", encoding="utf-8") as file:  # 打开已保存的轨迹划分
         split = json.load(file)  # 读取固定的训练与验证轨迹编号
@@ -60,7 +60,6 @@ def main() -> None:  # 从项目根目录启动指定实验的一次新运行
         torch.cuda.manual_seed_all(seed)  # 设置所有 CUDA 设备的随机种子
     device = torch.device("cuda" if cuda_available else "cpu")  # 优先选择 CUDA，否则使用 CPU
     print("device:", device, flush=True)  # 打印实际设备
-    source = LiberoSource(task_config)  # 创建数据源，不重新筛选或划分轨迹
     train_dataset = ACTDataset(source, split["train_episodes"], stats, model_config["chunk_size"], model_config["image_size"])  # 仅使用保存的训练轨迹和统计量
     val_dataset = ACTDataset(source, split["val_episodes"], stats, model_config["chunk_size"], model_config["image_size"])  # 验证集使用同一份训练统计量
     batch_size = train_config["batch_size"]  # 默认使用记录中的批次大小

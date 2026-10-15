@@ -1,10 +1,8 @@
 import numpy as np  # 拼接轨迹数组并计算逐维统计量
 
-from my_act.data.libero_dataset import LiberoSource  # 使用现有数据源读取轨迹
 
-
-def compute_stats(source: LiberoSource, episode_indices: list[int]) -> dict:  # 计算传入训练轨迹的状态与动作统计量
-    """按训练轨迹的全部帧计算逐维均值和总体标准差，返回一维 float32 数组。"""  # 函数说明
+def compute_stats(source, episode_indices: list[int]) -> dict:  # 计算传入训练轨迹的状态与动作统计量
+    """数据源需提供 read_episode(index)，返回 state 和 action 数组；按训练轨迹全部帧统计，返回一维 float32 数组。"""  # 函数说明
     states = []  # 收集各条训练轨迹的状态数组
     actions = []  # 收集各条训练轨迹的动作数组
     for episode_index in episode_indices:  # 遍历传入的训练集轨迹编号

@@ -6,7 +6,6 @@ import torch  # 选择设备并执行前向、反向和参数更新
 from torch.utils.data import DataLoader  # 从训练数据集中读取一个批次
 
 from my_act.config import read_yaml  # 读取模型、任务和训练配置
-from my_act.data.libero_dataset import LiberoSource  # 读取真实数据的轨迹与图像
 from my_act.data.split import split_episodes  # 按完整轨迹划分训练集与验证集
 from my_act.data.normalization import compute_stats  # 仅用训练轨迹计算归一化统计量
 from my_act.data.dataset import ACTDataset  # 组织图像、状态、动作块和补齐标记
@@ -14,11 +13,11 @@ from my_act.models.act import ACT  # 创建完整 ACT 模型
 from my_act.models.losses import compute_act_loss  # 计算掩码动作重建与 KL 损失
 
 
-def main() -> None:  # 从项目根目录执行一次真实数据训练更新
-    """从训练配置读取参数，命令行显式值优先；仅用一个真实批次更新一次，不执行配置中的训练步数、日志、验证或保存计划。一次更新不能证明模型已经学会任务。"""  # 函数说明
+def main(source=None) -> None:  # 从项目根目录执行一次真实数据训练更新
+    """调用方须传入与任务配置对应的真实数据源；从训练配置读取参数，命令行显式值优先；仅用一个真实批次更新一次，不执行配置中的训练步数、日志、验证或保存计划。一次更新不能证明模型已经学会任务。"""  # 函数说明
     parser = argparse.ArgumentParser(description="ACT 真实数据单步训练连通性演示，参数不代表调优结果")  # 创建参数解析器
     parser.add_argument("--model-config", default="configs/act.yaml", help="模型配置路径")  # 默认从项目根目录读取模型配置
-    parser.add_argument("--task-config", default="configs/tasks/libero_task10.yaml", help="任务配置路径")  # 默认读取 task10 配置
+    parser.add_argument("--task-config", required=True, help="任务配置路径；SO101 配置尚未实现")  # 数据接入后由调用方显式指定
     parser.add_argument("--train-config", default="configs/train.yaml", help="训练配置路径")  # 默认读取统一训练配置
     parser.add_argument("--seed", type=int, default=None, help="覆盖训练配置中的随机种子")  # 未指定时使用训练配置
     parser.add_argument("--val-count", type=int, default=None, help="覆盖验证轨迹数，默认按训练配置中的 val_ratio 计算")  # 允许显式沿用已有划分
@@ -26,6 +25,8 @@ def main() -> None:  # 从项目根目录执行一次真实数据训练更新
     parser.add_argument("--lr", type=float, default=None, help="覆盖训练配置中的学习率")  # 未指定时使用训练配置
     parser.add_argument("--kl-weight", type=float, default=None, help="覆盖训练配置中的 KL 权重")  # 允许显式传入 0 作为权重
     args = parser.parse_args()  # 读取实际命令行参数
+    if source is None:  # 尚未接入真实的 SO101 数据源，拒绝产生实验或训练产物
+        parser.error("SO101 数据源尚未实现；当前仅支持 --help。接入真实数据源后才能准备实验或训练。")  # 明确报告缺失适配，不使用假数据
     train_config = read_yaml(args.train_config)  # 读取训练配置，不执行其中预留的训练计划
     seed = args.seed if args.seed is not None else train_config["seed"]  # 显式命令行种子优先，否则使用配置值
     batch_size = args.batch_size if args.batch_size is not None else train_config["batch_size"]  # 解析实际批次大小
@@ -43,7 +44,6 @@ def main() -> None:  # 从项目根目录执行一次真实数据训练更新
     print("device:", device, flush=True)  # 打印本次使用的设备
     model_config = read_yaml(args.model_config)  # 读取模型配置并保留预训练设置
     task_config = read_yaml(args.task_config)  # 读取目标任务配置
-    source = LiberoSource(task_config)  # 创建真实数据源
     episode_indices = source.get_episode_indices(task_config["dataset"]["task_index"])  # 获取目标任务的全部轨迹编号
     val_count = args.val_count if args.val_count is not None else int(len(episode_indices) * train_config["val_ratio"])  # 显式验证数量优先，否则按配置比例取整
     split = split_episodes(episode_indices, seed=seed, val_count=val_count)  # 复用已有的轨迹划分函数
@@ -67,7 +67,7 @@ def main() -> None:  # 从项目根目录执行一次真实数据训练更新
     model.train()  # 启用模型的训练模式
     optimizer.zero_grad(set_to_none=True)  # 在唯一一次反向传播前清空梯度
     output = model(  # 使用带示范动作的后验分支执行前向
-        images=batch["images"],  # 传入当前帧双相机图像
+        images=batch["images"],  # 传入当前帧相机图像
         state=batch["state"],  # 传入归一化状态
         actions=batch["action"],  # 传入归一化示范动作块
         is_pad=batch["is_pad"],  # 传入动作补齐标记
