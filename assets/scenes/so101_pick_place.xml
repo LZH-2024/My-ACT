@@ -1,0 +1,52 @@
+<mujoco model="so101_pick_place">
+  <!-- 编译与资源：长度为米、质量为千克、角度为弧度；直接引用官方机器人本体。 -->
+  <include file="../../robots/so101/model/so101_new_calib.xml"/>
+  <!-- meshdir 按主场景文件所在目录解析；这里只覆盖资源目录，不修改机器人文件。 -->
+  <compiler angle="radian" meshdir="../../robots/so101/model/assets"/>
+
+  <!-- 物理设置：每步推进 0.002 秒仿真时间；隐式速度积分用于位置伺服的阻尼项。 -->
+  <option timestep="0.002" integrator="implicitfast" gravity="0 0 -9.81"/>
+
+  <!-- 视觉设置：固定相机原始图像为 640×480，与 ACT 输入缩放尺寸无关。 -->
+  <visual>
+    <global offwidth="640" offheight="480"/>
+    <headlight ambient="0.25 0.25 0.25" diffuse="0.5 0.5 0.5" specular="0 0 0"/>
+  </visual>
+  <statistic center="0.19 0 0.10" extent="0.75"/>
+  <asset>
+    <texture name="scene_sky" type="skybox" builtin="gradient"
+      rgb1="0.25 0.30 0.36" rgb2="0.70 0.74 0.78" width="512" height="3072"/>
+    <material name="table_mat" rgba="0.68 0.70 0.72 1" specular="0" shininess="0"/>
+    <material name="cube_mat" rgba="0.85 0.03 0.03 1" specular="0.1" shininess="0.1"/>
+    <material name="target_mat" rgba="0.05 0.60 0.12 1" specular="0" shininess="0"/>
+  </asset>
+
+  <worldbody>
+    <!-- 灯光与固定相机：此层 pos 均为世界坐标，机器人朝向工作区的方向为 +X。 -->
+    <light name="key_light" pos="0.1 -0.4 0.9" dir="0.1 0.4 -0.9"
+      diffuse="0.7 0.7 0.7" specular="0.1 0.1 0.1"/>
+    <light name="fill_light" pos="0.4 0.5 0.6" dir="-0.2 -0.5 -0.6"
+      diffuse="0.4 0.4 0.4" castshadow="false"/>
+    <!-- 相机从斜上方看向 (0.19, 0, 0.10)；xyaxes 给出相机局部 X、Y 轴的世界方向，视线为局部 -Z。 -->
+    <camera name="overview" pos="0.65 -0.65 0.60" fovy="45"
+      xyaxes="0.816271212 0.577668858 -0.000000000 -0.307183769 0.434064021 0.846892294"/>
+
+    <!-- 桌面：box 的 size 为三个半尺寸，完整尺寸为 0.70×0.60×0.04 米。 -->
+    <!-- 原模型底座固定在世界原点，底座视觉网格最低 z=-0.0024；桌面顶面取同一高度，不穿入底座。 -->
+    <geom name="table" type="box" pos="0.20 0 -0.0224" size="0.35 0.30 0.02"
+      material="table_mat" friction="0.8 0.005 0.0001"/>
+
+    <!-- 红方块：边长 0.03 米、质量 0.03 千克；初始底面比桌面高 0.005 米，允许自然落桌。 -->
+    <!-- body 的 pos 为世界坐标，内部 geom 的 pos 默认为 body 原点；质量与摩擦为未实物标定的场景初值。 -->
+    <body name="red_cube" pos="0.25 -0.05 0.0176">
+      <freejoint name="cube_free"/>
+      <geom name="red_cube_geom" type="box" size="0.015 0.015 0.015" mass="0.03"
+        material="cube_mat" friction="0.8 0.005 0.0001"/>
+    </body>
+
+    <!-- 绿色目标中心与方块中心相距 0.10 米；0.07×0.07 米区域给方块每侧留 0.02 米余量。 -->
+    <!-- 这是薄视觉标记，不是托盘；关闭碰撞，不阻挡物体。底面高于桌面 0.0002 米，避免共面闪烁。 -->
+    <geom name="target_marker" type="box" pos="0.25 0.05 -0.0021" size="0.035 0.035 0.0001"
+      material="target_mat" contype="0" conaffinity="0"/>
+  </worldbody>
+</mujoco>
