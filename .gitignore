@@ -42,3 +42,5 @@ Thumbs.db
 /configs/local/
 /calibration/
 /calibrations/
+/robots/so101/configs/local/
+/robots/so101/calibration/
