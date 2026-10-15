@@ -3,3 +3,5 @@ numpy==2.2.6 # 状态、动作、统计量与随机种子
 PyYAML==6.0.3 # 模型、任务和训练配置读写
 imageio==2.38.0 # 保留图像与视频保存基础工具，采集入口尚未实现
 imageio-ffmpeg==0.6.0 # 配套视频编码工具，不等同于系统 FFmpeg 共享库
+pyserial==3.5 # 串口通信，提供 serial 模块
+feetech-servo-sdk==1.0.0 # Feetech 舵机通信 SDK，提供 scservo_sdk 模块
