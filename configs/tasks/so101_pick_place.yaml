@@ -1,9 +1,0 @@
-# 本阶段仅包含基础场景：SO101、桌面和固定相机；尚无抓取物体、目标区或成功判定。
-scene: assets/so101/scene.xml # 相对于项目根目录，命令统一从根目录运行
-control_freq: 20 # 每秒控制周期数，不代表墙钟一定达到实时
-physics_timestep: 0.005 # 秒；沿用上游步长，每周期推进十个物理步
-initial_joint_positions: [0.0, 0.0, 0.0, 0.0, 0.0, 0.3] # 按接口顺序的六个关节角，单位 rad
-camera:
-  name: front # 本阶段仅返回一路固定相机
-  width: 640 # 原始 RGB 宽度，与 ACT 输入缩放尺寸分开
-  height: 480 # 原始 RGB 高度，训练侧继续自行缩放
