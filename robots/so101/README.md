@@ -1,4 +1,4 @@
-# SO101 从臂模型资源
+# SO101 机器人资源与只读硬件检查
 
 ## 来源与版本选择
 
@@ -25,6 +25,8 @@
 ```text
 robots/so101/
   README.md
+  scripts/
+    check_connection.py    # 只读检查指定舵机 ID
   model/
     LICENSE
     so101_new_calib.xml
@@ -60,3 +62,31 @@ robots/so101/
 上游上述说明没有指定 MuJoCo 最低版本。使用现有虚拟环境 MuJoCo 3.3.2 加载成功：`nq=6`、`nv=6`、`nu=6`、`nmesh=13`、`ncam=0`，没有缺失资源。一次 `mj_forward` 后，位置、速度、加速度、连杆变换、质量矩阵、驱动力及约束结果均为有限数值，MuJoCo 警告计数全为零。
 
 XML 未显式设置物理时间步；此次加载得到 MuJoCo 默认值 0.002 秒，未改写模型。这只是加载与前向计算检查，不代表已经验证动态稳定性、接触、关节控制、实物一致性或图形显示；本轮未执行 `mj_step` 或渲染。
+
+## 主臂只读连接检查
+
+从项目根目录使用项目虚拟环境运行：
+
+```bash
+.venv/bin/python robots/so101/scripts/check_connection.py --help
+.venv/bin/python robots/so101/scripts/check_connection.py --port /dev/ttyACM0
+# 只检查显式指定的 ID，波特率由调用方指定，不自动扫描。
+.venv/bin/python robots/so101/scripts/check_connection.py --port /dev/ttyACM0 --baudrate 1000000 --ids 1 2 3
+```
+
+入口使用 pyserial 3.5、feetech-servo-sdk 1.0.0，不导入完整 LeRobot。默认值依据同级 LeRobot 的 `src/lerobot/teleoperators/so_leader/so_leader.py`、`src/lerobot/motors/feetech/feetech.py` 和 `tables.py`：SO101 配置使用 STS3215、1000000 波特率、ID 1～6；SDK `PacketHandler(0)` 选择 STS/SMS 的小端字序。这些参考文件仅用于核对，脚本运行时不依赖同级仓库。
+
+| 读取内容 | 寄存器地址 | 字节数 |
+| --- | --- | --- |
+| 型号编号 | 3 | 2 |
+| ID | 5 | 1 |
+| Torque_Enable | 40 | 1 |
+| Present_Position | 56 | 2 |
+
+仅发送 PING 和 READ。SDK 自带 `ping()` 会附带型号读取并覆盖通信结果，因此入口通过 SDK 的 `txRxPacket` 单独发送 PING，再逐项读取，明确区分 ping 无响应、其他通信错误和 ping 成功但寄存器读取失败。每次响应等待限制为 100 ms，使用单调时钟；串口发送也设置有限超时。每个指定 ID 仅检查一次，不重试、不扫描其他波特率，无响应后继续下一指定 ID。完整读取成功时退出码为 0，否则为 1；原始通信错误文本、状态错误位均保留输出。
+
+所有型号仅输出原始编号；位置显示未经符号解码或校准的两字节原始字，可能含符号位，不限定为 0～4095，也不转换角度。默认 ID 顺序不能证明实际关节对应关系，仍需后续手动逐关节确认。
+
+配置主机串口波特率不是修改舵机 Baud_Rate 寄存器。入口不调用 LeRobot 高级连接初始化，不写 ID、模式、零点、限位、扭矩或目标位置；读到扭矩已开启也只报告。结束及异常时通过 finally 关闭已打开的串口，硬件读数只打印到终端，不保存到仓库。
+
+目前只实现本节只读连接检查；尚未实现端口发现、校准、实物关节映射或遥操作。本工具不执行运动或校准。
