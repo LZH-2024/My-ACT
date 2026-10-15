@@ -20,13 +20,27 @@ from my_act.training.checkpoint import save_checkpoint  # 复用模型与优化�
 
 
 def main() -> None:  # 从项目根目录启动指定实验的一次新运行
-    """复用实验划分与统计量，按优化器更新次数训练；smoke-test 仅演示三步流程，不代表正式实验成绩，不支持恢复训练。"""  # 函数说明
+    """复用实验划分与统计量，使用启动方目录或自行创建新目录；拒绝覆盖训练产物，smoke-test 仅演示三步流程，不支持恢复训练。"""  # 函数说明
     parser = argparse.ArgumentParser(description="ACT 训练入口与三步流程演示")  # 创建命令行参数解析器
     parser.add_argument("--experiment-dir", required=True, help="prepare_training.py 已生成的实验目录")  # 必须明确指定实验目录
     parser.add_argument("--smoke-test", action="store_true", help="仅用少量样本执行三步流程演示")  # 默认不启用流程演示
+    parser.add_argument("--run-dir", help="启动方已创建的运行目录；省略时自行创建新目录")  # 允许复用本次启动的日志目录，但不覆盖训练结果
     args = parser.parse_args()  # 读取本次入口参数
     experiment_dir = Path(args.experiment_dir)  # 使用调用方给定路径，不自动搜索最新实验
     print("experiment_dir:", experiment_dir.resolve(), flush=True)  # 明确打印所用实验目录
+    if args.run_dir is not None:  # 启动方负责创建目录时，不再生成时间戳
+        run_dir = Path(args.run_dir)  # 直接使用调用方传入的运行目录
+        if not run_dir.is_dir():  # 已提供的运行目录必须由启动方提前创建
+            parser.error(f"--run-dir 必须是已存在的目录：{run_dir}")  # 明确报告目录缺失或类型错误
+    else:  # 保留直接运行训练脚本的便利
+        started_at = datetime.now(ZoneInfo("Asia/Shanghai"))  # 仅生成一次上海时区时间
+        run_dir = experiment_dir / "runs" / started_at.strftime("%Y%m%d_%H%M%S_%f")  # 使用微秒时间戳创建本次独立运行路径
+        run_dir.mkdir(parents=True, exist_ok=False)  # 不覆盖已有同名运行目录
+    existing = [run_dir / name for name in ("metrics.jsonl", "run_config.yaml", "best_metrics.json") if (run_dir / name).exists()]  # 已有训练记录时拒绝覆盖，允许启动日志和启动记录存在
+    for pattern in ("*.pt", "*.pth", "*.ckpt", "*.safetensors"):  # 查找运行目录中的模型 checkpoint
+        existing.extend(run_dir.rglob(pattern))  # 包括子目录中的权重，避免误用历史运行目录
+    if existing:  # 检测到任何已有训练产物时停止，不加载数据或模型
+        parser.error("运行目录已有训练产物，拒绝覆盖：" + ", ".join(str(path) for path in existing))  # 保留原有运行内容
     model_config = read_yaml(experiment_dir / "model_config.yaml")  # 读取保存的完整模型配置
     task_config = read_yaml(experiment_dir / "task_config.yaml")  # 读取保存的任务配置
     train_config = read_yaml(experiment_dir / "train_config.yaml")  # 读取保存的训练配置
@@ -68,9 +82,6 @@ def main() -> None:  # 从项目根目录启动指定实验的一次新运行
     kl_weight = train_config["kl_weight"]  # 使用配置中的 KL 损失权重
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=num_workers)  # 每轮重新随机遍历训练样本
     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=num_workers)  # 按固定顺序遍历本次验证样本
-    timestamp = datetime.now(ZoneInfo("Asia/Shanghai")).strftime("%Y%m%d_%H%M%S")  # 生成上海时区的运行时间戳
-    run_dir = experiment_dir / "runs" / timestamp  # 在指定实验下创建本次运行路径
-    run_dir.mkdir(parents=True, exist_ok=False)  # 同名运行已存在时直接报错，不覆盖
     run_config = {  # 记录内存中实际生效的运行参数
         "smoke_test": args.smoke_test,  # 标记是否为流程演示
         "seed": seed,  # 记录随机种子

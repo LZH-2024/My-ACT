@@ -38,18 +38,17 @@ def main() -> None:  # 从项目根目录准备一次新的实验
     print("experiment_dir:", experiment_dir.resolve())  # 打印本次实验的绝对路径
     print("task_index:", task_index)  # 打印目标任务编号
     print(f"train_episodes={len(split['train_episodes'])}, val_episodes={len(split['val_episodes'])}")  # 打印训练和验证轨迹数量
-    for filename, config in (  # 保存三份读取后的完整配置
+    for filename, config in (  # 保存读取后的模型与训练配置
         ("model_config.yaml", model_config),  # 模型配置快照
-        ("task_config.yaml", task_config),  # 任务配置快照
         ("train_config.yaml", train_config),  # 训练配置快照
-    ):  # 依次处理固定的三份配置
+    ):  # 依次处理模型与训练配置
         path = experiment_dir / filename  # 拼接当前配置的保存路径
         with path.open("w", encoding="utf-8") as file:  # 使用 UTF-8 写入 YAML 文件
             yaml.safe_dump(config, file, allow_unicode=True, sort_keys=False)  # 保留中文与配置字段顺序
         print("saved:", path.resolve())  # 打印当前配置快照路径
-    source_path = experiment_dir / "task_config_source.yaml"  # 原始任务配置的保存路径
-    shutil.copyfile(args.task_config, source_path)  # 原样保留任务名称、数据版本和 revision 等注释
-    print("saved:", source_path.resolve())  # 打印原始任务配置路径
+    task_path = experiment_dir / "task_config.yaml"  # 仅保存一份带来源注释的任务配置
+    shutil.copyfile(args.task_config, task_path)  # 原样保留任务名称、数据版本和 revision 等注释
+    print("saved:", task_path.resolve())  # 打印任务配置快照路径
     split_record = {  # 组织本次实验使用的划分信息
         "task_index": task_index,  # 记录目标任务编号
         "seed": seed,  # 记录划分种子

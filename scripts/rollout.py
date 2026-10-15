@@ -1,9 +1,7 @@
 import argparse  # 解析单回合评估参数
-import hashlib  # 记录 checkpoint 和本脚本的文件摘要
 import json  # 保存可追溯的运行结果
 import os  # 读取启动命令传入的环境变量
 import random  # 固定 Python 随机种子
-import subprocess  # 读取当前源码 Git 提交
 import time  # 测量策略循环的墙钟耗时
 from collections import deque  # 按顺序执行预测动作，不做时间集成
 from pathlib import Path  # 组织输入与输出路径
@@ -55,10 +53,6 @@ def main() -> None:  # 从项目根目录执行一次闭环评估
     torch.manual_seed(args.seed)  # 固定 PyTorch 随机种子
     torch.cuda.manual_seed_all(args.seed)  # 固定 CUDA 随机种子，本轮不回退到 CPU
     checkpoint_path = Path(args.checkpoint).resolve()  # 记录 checkpoint 的绝对路径
-    with checkpoint_path.open("rb") as file:  # 以二进制方式读取权重摘要
-        checkpoint_sha256 = hashlib.file_digest(file, "sha256").hexdigest()  # 流式计算文件 SHA256
-    git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()  # 记录运行时源码提交
-    script_sha256 = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()  # 补充本轮新增脚本的准确内容摘要
     print("加载策略:", checkpoint_path, "device=cuda", flush=True)  # 明确使用 CUDA 和指定权重
     policy = ACTPolicy(checkpoint_path, device="cuda")  # 完整加载 checkpoint，保持已有推理接口
     chunk_size = policy.model.query_embedding.num_embeddings  # 从实际模型读取动作块长度
@@ -141,8 +135,8 @@ def main() -> None:  # 从项目根目录执行一次闭环评估
         executed_actions=np.asarray(executed_actions, dtype=np.float32).reshape(-1, 7),  # 保存同形状的裁剪后动作
     )  # 完成动作记录保存
     result = {  # 保存本回合配置、来源和结果，不解释为多回合成功率
-        "checkpoint": str(checkpoint_path), "checkpoint_sha256": checkpoint_sha256,  # 记录权重绝对路径和文件摘要
-        "checkpoint_step": policy.step, "git_sha": git_sha, "script_sha256": script_sha256,  # 记录模型步数、源码提交及实际脚本内容摘要
+        "checkpoint": str(checkpoint_path),  # 记录本次使用的权重绝对路径
+        "checkpoint_step": policy.step,  # 记录权重对应的训练更新次数
         "suite": suite_name, "task_name": task_name, "task_id": task_id,  # 明确套件编号不同于数据集编号
         "supported_task_only": "libero_goal / put_the_bowl_on_the_plate",  # 记录当前脚本仅支持的任务范围
         "task_config": str(Path(args.task_config).resolve()), "dataset_task_index": task_config["dataset"]["task_index"],  # 保存本次数据任务配置来源
