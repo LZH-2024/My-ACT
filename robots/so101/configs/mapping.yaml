@@ -1,0 +1,17 @@
+# 通用主臂到仿真的换算规则；方向与零点必须通过 --align 记录在 configs/local/。
+# STS3215 单圈有 4096 个编码器计数；这里用物理计数比例，不用 LeRobot 的范围百分比。
+counts_per_turn: 4096
+control_freq: 20.0 # Hz；当前场景 0.002 秒，对应每次控制 25 个物理步
+startup_seconds: 3.0 # 首次对齐目标的最短平滑过渡时间；正常跟随不做滤波
+startup_speed_rad_s: 0.5 # 启动阶段每秒最大目标变化，较远目标会延长过渡
+print_every_seconds: 1.0 # 终端低频显示，包含裁剪前目标与实际角度
+max_sample_seconds: 0.2 # 四个 50 ms 周期；超过则拒绝这一批顺序读取的样本
+range_tolerance_counts: 32 # 约 2.8 度，允许 8 计数的小幅采集边界偏差；超出就退出
+clip_tolerance_rad: 0.08 # 约 4.6 度，仅容忍小幅仿真限位越界，不掩盖大偏置错误
+max_step_rad: 0.25 # 每控制样本最多约 14.3 度；20 Hz 下是保守的人工小幅演示门限
+alignment_preview_rad: 0.12 # 仿真正方向演示约 6.9 度，不扫描全行程
+alignment_min_counts: 10 # 至少约 0.88 度，用于区分静止抖动和有效方向采样
+alignment_max_counts: 300 # 约 26.4 度，方向确认只允许小幅运动
+# 以下仅为仿真夹爪预览候选点，须用户目视确认闭合/张开，才写入设备对齐文件。
+gripper_closed_rad: 0.0
+gripper_open_rad: 0.7

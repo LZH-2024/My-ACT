@@ -26,6 +26,7 @@
 robots/so101/
   README.md
   scripts/
+    teleoperate.py         # 交互软件对齐与只读主臂遥操作仿真
     check_connection.py    # 只读检查指定舵机 ID
     calibrate.py           # 现场交互确认的主臂校准
   model/
@@ -90,7 +91,7 @@ XML 未显式设置物理时间步；此次加载得到 MuJoCo 默认值 0.002 �
 
 配置主机串口波特率不是修改舵机 Baud_Rate 寄存器。入口不调用 LeRobot 高级连接初始化，不写 ID、模式、零点、限位、扭矩或目标位置；读到扭矩已开启也只报告。结束及异常时通过 finally 关闭已打开的串口，硬件读数只打印到终端，不保存到仓库。
 
-本节工具只执行连接检查，不执行运动或校准。主臂校准使用下面的独立交互入口；端口发现、实物到仿真关节映射和遥操作仍未实现。
+本节工具只执行连接检查，不执行运动或校准。主臂校准使用下面的独立交互入口；端口发现仍未实现；实物到仿真映射和遥操作见下方专节，需要现场对齐和验收。
 
 ## 主臂交互式校准
 
@@ -172,3 +173,75 @@ Present_Position 的符号位为 bit 15，是符号加幅值，不是普通 int1
 表格区分读取失败、读取成功但值不一致、全部一致，并输出具体字段差异。位置同时显示原始字和按 bit 15 符号幅值规则解码后的计数；它已包含内部偏置，不重复补偿。当前位置无需等于参考姿态，暂时超出采集范围只单独提示，不计为校准写入失败，也不转换为仿真角度。
 
 全部核验一致时退出码为 0，否则为 1。只读 PING/READ，不修复差异、不切换扭矩、不发送目标、不修改校准文件；finally 关闭串口。读数仅打印，不保存到受 Git 管理的文件。
+
+## 主臂遥操作仿真
+
+真实设备只读，仿真从臂接收绝对关节目标。硬件校准与软件映射分开：本工具不写任何舵机寄存器、不改变原 `calibration.json`，也不把模型限位当作实物校准值。通信复用 `calibration.py` 的寄存器、符号幅值解码及有限超时；不调用包含配置写入的 LeRobot `connect/configure`。
+
+### 换算依据与尚待确认的部分
+
+- [上游 new_calib 说明](https://github.com/TheRobotStudio/SO-ARM100/blob/main/Simulation/SO101/README.md) 将零位描述为行程中部；主臂 URDF 复用五轴约定，但手柄行程只是 CAD 估计，且上游明确未实现 LeRobot 夹爪 0～100 到 MJCF 的映射。XML 肘关节注释提到限位的 5° 偏移，不能据此给实物读数再加一个未经验证的 5°。
+- 本地 `../lerobot/src/lerobot/teleoperators/so_leader/so_leader.py` 的 `get_action` 读取 Present_Position；`motors/motors_bus.py::_normalize` 默认将臂关节变为 [-100,100]、夹爪变为 [0,100]。这些是范围百分比，不是角度。其可选 degrees 模式使用范围中点和 `360/4095` 边界刻度；本项目不调用这两套归一化。
+- 本地 `motors/feetech/tables.py::MODEL_RESOLUTION` 给 STS3215 4096 计数/圈。本工具采用物理编码器比例 `k = 2π/4096 ≈ 0.00153398 rad/count`（0.087890625°/count）。[飞特控制表](https://ftservo.github.io/ftservo-wiki/reference/parameter/memory-sts/) 定义位置反馈和 Phase bit 4。默认单圈反馈；比例不是采集范围到仿真限位的拉伸。
+- 原始两字节位置先按 bit 15 符号幅值解码，得到计数 c。该计数已经受内部 Homing_Offset 影响，后续不再次减去偏置；约定 2047 是硬件校准参考计数，也不代表已自动精确匹配 MJCF 零位。
+
+五轴统一公式：`q = q_ref + s × (c_continuous - c_ref) × k`。首次交互对齐显示模型零位，由用户记录对应主臂计数 `c_ref`；再观察仿真小幅正向运动，手动同向移动主臂，通过计数差确定 `s=+1/-1`。因此软件角度偏置是 `q_ref - s*c_ref*k`，来自现场参考姿态，不用采集范围中点猜测。
+
+| 关节 | 比例 | 方向与角度偏置来源 |
+| --- | --- | --- |
+| shoulder_pan | 2π/4096 rad/count | 现场参考点 + 正向小幅确认 |
+| shoulder_lift | 2π/4096 rad/count | 现场参考点 + 正向小幅确认 |
+| elbow_flex | 2π/4096 rad/count | 同上，不额外猜加 5° |
+| wrist_flex | 2π/4096 rad/count | 现场参考点 + 正向小幅确认 |
+| wrist_roll | 2π/4096 rad/count | 同上，并连续处理单圈跨界 |
+
+腕转首样本取相对参考点的最近单圈差，随后累积相邻样本的最短计数差，例如 4094→2 是 +4 计数。跨界不会跳一整圈，也不会把累积多圈运动重新绕回合法限位；最终仍受模型有限关节行程约束。启动参考有整圈歧义时，必须回到参考姿态，不支持无限旋转。
+
+夹爪单独采用 `u=(c-c_closed)/(c_open-c_closed)`、`q=q_closed+u*(q_open-q_closed)`。两端计数由用户实际闭合/张开手柄时记录，允许读数方向相反；仿真开口候选为 0 和 0.7 rad，需要目视认可后才保存，不能声称它们是夹爪的机械极限。未确认时不能运行完整跟随，也不会自动生成一套方向全为 +1 的设备配置。
+
+### 首次现场对齐
+
+从 WSL 项目根目录运行，保持真实舵机扭矩关闭。若 shell 残留 OSMesa 的 PyOpenGL 配置，可在这次命令前用 `env -u PYOPENGL_PLATFORM`；无需改 shell 配置。
+
+```bash
+cd /home/lzh/projects/my-act
+env -u PYOPENGL_PLATFORM MUJOCO_GL=glfw .venv/bin/python robots/so101/scripts/teleoperate.py \
+  --align --device-name leader01 --port /dev/ttyACM0 --baudrate 1000000 \
+  --calibration-file robots/so101/calibration/leader/leader01/calibration.json \
+  --scene assets/scenes/so101_pick_place.xml \
+  --mapping-config robots/so101/configs/mapping.yaml \
+  --alignment-file robots/so101/configs/local/leader01.yaml
+```
+
+1. 逐轴按窗口零位匹配主臂相对连杆姿态，输入 `MATCH` 记录计数。底座朝向需对应，不能只按屏幕左右判断；必要时拖动视角，看不清就取消。
+2. 该仿真关节缓慢增加 0.12 rad（约 6.9°）。观察局部正方向后，将实物同一关节小幅同向移动，再输入 `MATCH`。工具按计数变化确定方向，然后提示回到参考姿态。允许 10～300 计数的确认位移，不要求扫极限。
+3. 分别查看夹爪候选闭合/张开姿态，手柄放到对应端点后 `MATCH`。若候选开口不合适，取消，明确修改通用配置中的候选角度后重新对齐；工具不会猜测端点。
+4. 查看完整对齐内容，输入 `SAVE` 才生成本机 YAML 并退出。已有文件不会覆盖；重新对齐需显式使用另一个本机文件名。此次只写本机映射文件，不改硬件校准或任何寄存器。
+
+本机 YAML 保存角色、设备名、串口、波特率、校准文件路径、各轴参考计数/参考 rad/方向，以及夹爪两端点。不要提交该文件。换设备、重新硬件校准、改变反馈方向或参考姿态后，需要重新现场对齐；文件路径不构成设备身份自动认证。`calibration.json` 不混入这些映射参数。
+
+### 单关节与完整跟随
+
+对齐完成后执行。未指定端口、波特率和校准路径时从本机文件读取；也可用命令行显式覆盖。
+
+```bash
+# 底座单关节，其余五个仿真关节保持明确初始目标。
+env -u PYOPENGL_PLATFORM MUJOCO_GL=glfw .venv/bin/python robots/so101/scripts/teleoperate.py \
+  --alignment-file robots/so101/configs/local/leader01.yaml --joint shoulder_pan
+
+# 全部六轴跟随，不限制为固定时长；关闭窗口或 Ctrl+C 结束。
+env -u PYOPENGL_PLATFORM MUJOCO_GL=glfw .venv/bin/python robots/so101/scripts/teleoperate.py \
+  --alignment-file robots/so101/configs/local/leader01.yaml
+```
+
+按以下顺序逐次替换 `--joint`：① shoulder_pan 底座，② shoulder_lift 肩部，③ elbow_flex 肘部，④ wrist_flex 腕俯仰，⑤ wrist_roll 腕转，⑥ gripper 夹爪，最后去掉 `--joint` 做⑦全轴协同。每项小幅缓慢移动，检查方向、静止姿态与连续性；暂不扫机械极限、不尝试抓取。首次对齐不是最终验收，未经目视确认不能宣称主从完全一致。
+
+启动先打印映射原目标与模型范围，等待 `START`。请在确认与启动过渡期间保持主臂不动；确认后仍读取新样本，不重放确认前的旧样本。初始目标沿用查看入口的五轴 0 rad、夹爪 0.7 rad；仅启动阶段以最多 0.5 rad/s 过渡，至少 3 秒，过渡超时未稳定则退出。正常阶段每次完整新样本直接映射，没有隐藏滤波。`--steps N` 可限制总控制周期数（包含启动过渡），默认运行到窗口关闭。
+
+### 门限与失败处理
+
+通用配置集中记录单位与初值：采集边界余量 32 计数（约 2.8°，包含此前肘部超出 8 计数）；仿真限位小幅容忍 0.08 rad（约 4.6°）；相邻有效跟随目标变化上限 0.25 rad/样本（约 14.3°）。这些是本次人工小幅演示的异常门限，不是硬件安全额定值，也不是经实验优化的滤波参数。
+
+采集范围只用于位置异常检查，小幅超出不修改校准、不直接限幅计数；模型可执行范围取 joint range 与 actuator ctrlrange 的交集。原映射目标保留用于显示，小幅越界才裁剪；明显越界和跳变直接退出。单关节模式只对被跟随关节应用目标限位/跳变检查，其余 ctrl 保持初始值，但仍要求六个硬件读数完整、有限且没有明显超采集范围。每秒显示计数、原目标、当前 ctrl、实际 qpos 和裁剪状态，并合并该间隔内的短暂越界提示。
+
+每次顺序读取六个舵机，不声称硬件同时采样；单次响应超时 100 ms，整批超过 0.2 秒拒收。失败不填零、不复用旧样本，不推进下一仿真周期，直接报告原始错误并通过 finally 关闭串口/窗口。不自动重连、不切换扭矩、不发送真实运动目标；启动发现任何扭矩非零就退出。此工具不采集数据、不启动训练、不实现抓取成功判定。
