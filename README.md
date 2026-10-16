@@ -1,12 +1,12 @@
 # SO101 自建场景与 ACT
 
-目标是用真实 SO101 主臂遥操作 MuJoCo 从臂，后续采集演示并训练现有 PyTorch ACT。当前已完成官方机器人资源、静态桌面布局、位置保持步进、交互查看与固定相机截图；已加入只读主臂采样、现场映射对齐和遥操作入口，主从姿态与方向仍需用户现场验收；尚未实现数据采集、抓取策略或成功判定。
+目标是用真实 SO101 主臂遥操作 MuJoCo 从臂，后续采集演示并训练现有 PyTorch ACT。当前已完成官方机器人资源、静态桌面布局、位置保持步进、交互查看与固定相机截图；尚未实现遥操作、数据采集、抓取控制或成功判定。
 
 ## 文件与坐标
 
 - `robots/so101/model/so101_new_calib.xml`：TheRobotStudio 官方从臂模型及 `assets/` 网格，保持原样；来源、许可证和关节约定见 `robots/so101/README.md`。
 - `assets/scenes/so101_pick_place.xml`：通过相对路径 include 本体，添加桌面、自由方块、目标标记和相机。场景在 include 后指定自己的 meshdir，按主场景目录找到唯一一份官方网格；未复制或改写机器人 XML。
-- `src/my_act/sim/env.py`：供查看和遥操作共用的 MuJoCo 加载、控制与渲染；`scripts/view_sim.py` 提供查看入口。按名称重置机器人关节和位置执行器目标。之后只用动力学步进，不持续覆盖 qpos。自由方块增加了位置和速度维度，场景为 `nq=13、nv=12、nu=6`。
+- `scripts/view_sim.py`：直接使用 MuJoCo；按名称重置机器人关节和位置执行器目标。之后只用动力学步进，不持续覆盖 qpos。自由方块增加了位置和速度维度，场景为 `nq=13、nv=12、nu=6`。
 
 长度单位为米、质量为千克、关节角为弧度。世界 Z 向上，初始机械臂向 +X 展开。机器人底座在世界原点固定，底座视觉网格最低处为 z=-0.0024，因此桌面顶面取 z=-0.0024，不改变机器人安装坐标。
 
@@ -50,21 +50,3 @@ MuJoCo 3.3.2 下已通过语法、帮助入口、模型及网格加载、初始�
 固定相机画面已查看，覆盖夹爪、工作区域、方块和目标。WSLg 下 GUI 已成功打开、完成有限步进并退出；手动视角操作及关闭按钮尚待用户确认。没有运行关节扫描、抓取尝试或任务评测，这些短检查不代表长期动态稳定性或抓取成功率。
 
 ACT 网络、损失、训练配置和实验输出规则保持不变；本轮没有安装依赖。检查产物放在已忽略的 `outputs/sim_checks/`，机器人资源放在 `robots/so101/`，任务场景放在 `assets/scenes/`。
-
-## 主臂遥操作入口
-
-硬件入口为 `robots/so101/scripts/teleoperate.py`，通信在 `src/my_act/hardware/so101/leader.py`，计数映射在同目录 `mapping.py`。通用参数在 `robots/so101/configs/mapping.yaml`，现场对齐文件在已忽略的 `robots/so101/configs/local/`；原硬件校准文件不变。
-
-第一次必须运行交互对齐，确认五轴参考姿态/方向及夹爪两端点，再按单关节顺序验收。完整命令、换算依据和注意事项见 [机器人说明](robots/so101/README.md#主臂遥操作仿真)。这里仅向仿真发送 rad 位置目标，真实主臂全程只读。
-
-```bash
-MUJOCO_GL=glfw .venv/bin/python robots/so101/scripts/teleoperate.py --help
-# 首次：现场确认后才生成本机文件；不会覆盖已有文件。
-MUJOCO_GL=glfw .venv/bin/python robots/so101/scripts/teleoperate.py --align --port /dev/ttyACM0
-# 对齐完成后，先从底座单关节开始，输入 START 才推进仿真。
-MUJOCO_GL=glfw .venv/bin/python robots/so101/scripts/teleoperate.py --joint shoulder_pan
-# 全部单关节验收后再使用完整跟随。
-MUJOCO_GL=glfw .venv/bin/python robots/so101/scripts/teleoperate.py
-```
-
-20 Hz 控制周期内固定推进 25 个 0.002 秒物理步；墙钟过慢时不补跑积压周期。只有启动阶段做显式限速过渡，正常跟随不做平滑滤波。遥操作不生成离屏相机图像，不保存演示。串口读取失败、异常跳变或明显越界会停止仿真推进并退出；不自动重连、复位或改扭矩。关闭窗口或 Ctrl+C 释放串口与窗口资源。
