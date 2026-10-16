@@ -1,4 +1,4 @@
-# SO101 机器人资源与只读硬件检查
+# SO101 机器人资源与硬件工具
 
 ## 来源与版本选择
 
@@ -27,6 +27,7 @@ robots/so101/
   README.md
   scripts/
     check_connection.py    # 只读检查指定舵机 ID
+    calibrate.py           # 现场交互确认的主臂校准
   model/
     LICENSE
     so101_new_calib.xml
@@ -89,4 +90,68 @@ XML 未显式设置物理时间步；此次加载得到 MuJoCo 默认值 0.002 �
 
 配置主机串口波特率不是修改舵机 Baud_Rate 寄存器。入口不调用 LeRobot 高级连接初始化，不写 ID、模式、零点、限位、扭矩或目标位置；读到扭矩已开启也只报告。结束及异常时通过 finally 关闭已打开的串口，硬件读数只打印到终端，不保存到仓库。
 
-目前只实现本节只读连接检查；尚未实现端口发现、校准、实物关节映射或遥操作。本工具不执行运动或校准。
+本节工具只执行连接检查，不执行运动或校准。主臂校准使用下面的独立交互入口；端口发现、实物到仿真关节映射和遥操作仍未实现。
+
+## 主臂交互式校准
+
+只针对用户已确认的主臂 ID：1 shoulder_pan、2 shoulder_lift、3 elbow_flex、4 wrist_flex、5 wrist_roll、6 gripper。使用现有 pyserial 和 Feetech SDK，不安装或导入 LeRobot，不连接仿真。此次只做语法、帮助和纯函数检查，尚未替用户执行硬件校准。
+
+参考的实际本地调用链（同级 `../lerobot/`）：
+
+- `src/lerobot/scripts/lerobot_calibrate.py`：连接设备、调用校准、退出。
+- `src/lerobot/teleoperators/so_leader/so_leader.py`：`SOLeader.calibrate`、参考姿态图、wrist_roll 特殊处理；SO101Leader 是该实现的别名。
+- `src/lerobot/motors/motors_bus.py`：`reset_calibration`、`set_half_turn_homings`、`record_ranges_of_motion`、归一化。
+- `src/lerobot/motors/feetech/feetech.py` 与 `tables.py`：偏置公式、寄存器地址、符号位、校准读写和配置步骤。
+- `src/lerobot/motors/encoding_utils.py`、`src/lerobot/teleoperators/teleoperator.py`：符号幅值编码、JSON 保存与加载。
+
+本项目将寄存器访问和纯函数放在 `src/my_act/hardware/so101/calibration.py`，交互流程放在 `robots/so101/scripts/calibrate.py`，正常包导入，无 sys.path 修改。改编的算法、示意图保留 Hugging Face Apache-2.0 声明，许可证原文在 `src/my_act/hardware/so101/LICENSE`；新增了备份、显式确认、范围有效性检查和受限写入。
+
+### 现场运行
+
+先阅读 [SO101 官方校准说明与视频](https://huggingface.co/docs/lerobot/main/en/so101#calibration-video)。本地 SOLeader 还提供主臂参考姿态示意，入口会原样打印；[官方视频](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibrate_so101_2.mp4) 来自同一文档。按图示摆到各关节行程中部，不能自行用仿真 qpos=0 或旧校准的水平伸展零位替代。
+
+在 WSL 的交互终端执行下面一条完整命令。`leader01` 是给这条实物主臂指定的稳定名称示例，若改名，应同步修改文件目录，不能用于另一台设备。
+
+```bash
+cd /home/lzh/projects/my-act && .venv/bin/python robots/so101/scripts/calibrate.py --port /dev/ttyACM0 --baudrate 1000000 --device-name leader01 --calibration-file robots/so101/calibration/leader/leader01/calibration.json
+```
+
+`--calibration-file` 可指定该设备目录内的 JSON 路径；省略时使用上述默认结构。名称和路径区分 leader 角色及设备身份，不能与 follower 校准共用。路径、串口和设备名称不是自动发现的硬件身份，运行前须现场确认。
+
+1. 若已有文件，输入 `reuse` 将旧文件偏置及限位写回舵机，或输入 `new` 重新采集；其他输入取消。复用也要经过备份和写入确认，不静默应用。
+2. 只读核对六个 ID、型号编号 777，并读取所有可能修改的寄存器原始字。先在 `calibration/leader/<设备名>/backups/<时间戳>/` 保存 `registers_before.json`；已有文件原样备份为 `previous_calibration.json`，不覆盖旧备份。
+3. 查看原值与写入计划。若发现任何扭矩非零，先托住臂体，再输入 `DISABLE` 明确允许关闭；随后输入 `WRITE` 才会执行准备写入。不会开启扭矩或发送运动目标。
+4. 新校准时按官方图示摆参考姿态并保持不动，按回车清除旧偏置、恢复 0～4095 限位并读取当前位置。由 `当前位置 - 2047` 计算新偏置，显示后再输入 `WRITE` 写入。先清零并读回旧偏置，避免把旧偏置当成零或重复累加。
+5. 按提示开始只读范围采样。逐个手动缓慢移动 shoulder_pan、shoulder_lift、elbow_flex、wrist_flex 和 gripper，覆盖完整安全行程；不要用力顶止挡。`wrist_roll` 不采范围，也不要求绕转一圈，沿用上游范围 0～4095。采样最多约 20 Hz，终端最多 1 Hz 覆盖刷新，按回车结束。
+6. 范围必须在 0～4095 内且非退化；本工具另要求五个采集关节覆盖中心计数 2047 的两侧，以拒绝只采到半边的情况。若读数越界、发生跳变或范围不满足，不自动裁剪或修正。数值变化不证明完整行程，因此必须现场检查显示的范围，再输入 `SAVE` 确认写限位。
+7. 每次写入检查 SDK 状态并立即读回；所有写入完成后恢复原 Lock 值、确认扭矩仍为 0，才保存新校准文件。重校准通过临时完整文件替换，旧文件已备份；复用不重写原校准文件。
+
+### 寄存器变更与失败行为
+
+| 寄存器 | 地址 / 字节 | 处理 |
+| --- | --- | --- |
+| Torque_Enable | 40 / 1 | 明确确认后设 0；绝不写 1，也不恢复此前开启状态 |
+| Lock | 55 / 1 | 设 0 以写配置；流程成功后恢复各电机原值 |
+| Operating_Mode | 33 / 1 | 沿用上游校准，设为位置模式 0；不发送位置目标 |
+| Phase | 18 / 1 | 只在原 bit 4 为 1 时清除它，保留其他位，沿用上游 STS3215 角度反馈配置 |
+| Homing_Offset | 31 / 2 | 新校准先清零再写参考姿态偏置；复用时直接写文件值 |
+| Min_Position_Limit / Max_Position_Limit | 9 / 2、11 / 2 | 新校准先恢复 0/4095，采样完成后写范围；复用时写文件值 |
+
+上游 `connect(calibrate=False)` 仍会调用 `configure()`，其中还会配置返回延迟、加速度等。本工具不调用该高级流程，也不带入这些无关写入；仅明确保留影响本次位置反馈的 Phase bit 4 处理。串口波特率只在主机设置，不写舵机 Baud_Rate，不改 ID。
+
+通信等待每次最多 100 ms，不自动重试。取消、Ctrl+C、输入关闭、通信失败或无效范围均终止；finally 只关闭串口。开始写入后中断可能留下部分配置，**不会自动回滚、重试或恢复扭矩**，终端会报告原始错误和备份路径。原成功文件保持不变；它在失败后不一定仍与舵机内部配置相符，不能直接当作当前有效校准。应先根据备份与现场状态核对，不继续遥操作。
+
+### 输出字段与单位
+
+JSON 沿用 LeRobot 的关节名到五字段字典，不包含设备包装层，设备身份由角色目录、设备名称及备份元信息记录。
+
+| 字段 | 含义 |
+| --- | --- |
+| id | 用户确认的舵机总线 ID |
+| drive_mode | 本流程固定 0，LeRobot 归一化的方向标记；不是 Operating_Mode 寄存器 |
+| homing_offset | 有符号偏置计数，Homing_Offset 的符号位为 bit 11 |
+| range_min / range_max | 写入新偏置后采集的位置计数范围，wrist_roll 固定 0/4095 |
+
+Present_Position 的符号位为 bit 15，是符号加幅值，不是普通 int16 补码；Homing_Offset 则用 bit 11。舵机返回位置已应用内部偏置，上游公式为 `Present_Position = Actual_Position - Homing_Offset`，后续不能再次减文件里的偏置。
+
+本工具保存计数，不输出角度或归一化动作。LeRobot 默认对五个臂关节将范围内计数映射到 [-100,100]，夹爪映射到 [0,100]，范围模式会先限幅；可选 degrees 模式是按范围中点及 4095 分辨率换算。本轮不实现这些读数输出接口，更不把它们直接映射到 MuJoCo 弧度。实物方向、零点、夹爪与 `so101_new_calib.xml` 的对应关系留到下一轮。
