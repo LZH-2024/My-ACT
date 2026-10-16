@@ -155,3 +155,20 @@ JSON 沿用 LeRobot 的关节名到五字段字典，不包含设备包装层，
 Present_Position 的符号位为 bit 15，是符号加幅值，不是普通 int16 补码；Homing_Offset 则用 bit 11。舵机返回位置已应用内部偏置，上游公式为 `Present_Position = Actual_Position - Homing_Offset`，后续不能再次减文件里的偏置。
 
 本工具保存计数，不输出角度或归一化动作。LeRobot 默认对五个臂关节将范围内计数映射到 [-100,100]，夹爪映射到 [0,100]，范围模式会先限幅；可选 degrees 模式是按范围中点及 4095 分辨率换算。本轮不实现这些读数输出接口，更不把它们直接映射到 MuJoCo 弧度。实物方向、零点、夹爪与 `so101_new_calib.xml` 的对应关系留到下一轮。
+
+
+## 校准后只读核验
+
+沿用 `check_connection.py`，增加 `--calibration-file` 和 `--register-backup`。两项一起提供时，复用校准模块的寄存器定义、符号解码及关节 ID 检查，逐关节比较偏置和限位；不提供时保留普通连接检查。必须指定与本次校准对应的备份，不自动选择最近时间戳；有多份备份时先根据现场校准记录确认归属。设备目录、角色、设备名、串口、波特率和 ID 映射不符时，在打开串口前报错。
+
+从项目根目录执行（将备份路径替换为本次校准的实际路径）：
+
+```bash
+.venv/bin/python robots/so101/scripts/check_connection.py --port /dev/ttyACM0 --baudrate 1000000 --calibration-file robots/so101/calibration/leader/leader01/calibration.json --register-backup robots/so101/calibration/leader/leader01/backups/<本次校准时间戳>/registers_before.json
+```
+
+每个 ID 仅 PING 一次，随后逐项读取 ID、型号编号、偏置、最小/最大限位、扭矩、工作模式、Phase、Lock 和当前位置，不重试。对照本项目校准流程，要求 Torque_Enable=0、Operating_Mode=0、Phase 为备份值清除 bit 4 后的结果（其余位保持）、Lock 恢复备份值；不把文件的 drive_mode 当作工作模式或扭矩状态。
+
+表格区分读取失败、读取成功但值不一致、全部一致，并输出具体字段差异。位置同时显示原始字和按 bit 15 符号幅值规则解码后的计数；它已包含内部偏置，不重复补偿。当前位置无需等于参考姿态，暂时超出采集范围只单独提示，不计为校准写入失败，也不转换为仿真角度。
+
+全部核验一致时退出码为 0，否则为 1。只读 PING/READ，不修复差异、不切换扭矩、不发送目标、不修改校准文件；finally 关闭串口。读数仅打印，不保存到受 Git 管理的文件。
