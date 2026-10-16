@@ -7,28 +7,7 @@ import time
 import imageio.v3 as iio
 import mujoco
 import numpy as np
-
-
-# 五个机械臂关节保持模型零位，夹爪目标为 0.7 rad；所有值都是仿真位置目标。
-INITIAL_TARGETS = {
-    "shoulder_pan": 0.0,
-    "shoulder_lift": 0.0,
-    "elbow_flex": 0.0,
-    "wrist_flex": 0.0,
-    "wrist_roll": 0.0,
-    "gripper": 0.7,
-}
-
-
-def reset_scene(model: mujoco.MjModel, data: mujoco.MjData) -> None:
-    """只在重置时按名称设置机器人关节，同时设置位置执行器的保持目标。"""
-    mujoco.mj_resetData(model, data)  # 方块自由关节使用场景中的位置和姿态。
-    for name, target in INITIAL_TARGETS.items():
-        joint = model.joint(name)
-        actuator = model.actuator(name)
-        data.qpos[int(joint.qposadr[0])] = target  # 不假设机器人占据 qpos 的前六项。
-        data.ctrl[actuator.id] = target  # 避免夹爪从初始开口突然运动到默认零目标。
-    mujoco.mj_forward(model, data)
+from my_act.sim.scene import INITIAL_TARGETS, reset_scene
 
 
 def save_image(model: mujoco.MjModel, data: mujoco.MjData, path: Path) -> None:
