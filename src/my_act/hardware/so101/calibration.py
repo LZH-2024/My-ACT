@@ -17,6 +17,8 @@
 
 """SO101 校准使用的有限寄存器访问、编码与文件字段检查。"""
 
+from pathlib import Path
+import re
 import time
 import scservo_sdk as scs
 
@@ -29,6 +31,37 @@ WRITABLE = {"Torque_Enable": (40, 1), "Lock": (55, 1), "Operating_Mode": (33, 1)
 REGISTERS = {**WRITABLE, "Model_Number": (3, 2), "ID": (5, 1), "Present_Position": (56, 2)}
 SIGN_BITS = {"Homing_Offset": 11, "Present_Position": 15}
 REFERENCE_URL = "https://huggingface.co/docs/lerobot/main/en/so101#calibration-video"
+
+ROLES = {"leader": "主臂", "follower": "从臂"}
+
+
+def resolve_calibration_paths(calibration_root: Path, role: str, device_name: str | None,
+                              calibration_file: Path | None = None) -> tuple[Path, Path]:
+    """在读取文件或打开串口前隔离角色/设备；只读旧命令可从路径推断设备名。"""
+    if role not in ROLES:
+        raise ValueError("角色必须为 leader 或 follower")
+    root = calibration_root.resolve()
+    if device_name is None:
+        if calibration_file is None:
+            raise ValueError("必须提供设备名称或校准文件")
+        try:
+            relative = calibration_file.absolute().relative_to(root / role)
+        except ValueError:
+            raise ValueError(f"校准文件必须位于 {role} 角色目录内") from None
+        if len(relative.parts) < 2:
+            raise ValueError("校准文件必须位于角色下的设备目录内")
+        device_name = relative.parts[0]
+    if not re.fullmatch(r'[\w-]+', device_name):
+        raise ValueError("设备名称只允许文字、数字、下划线和短横线")
+    device_dir = root / role / device_name
+    if device_dir.resolve() != device_dir:
+        raise ValueError("角色或设备目录不能通过符号链接指向其他目录")
+    requested = (calibration_file or device_dir / "calibration.json").absolute()
+    path = requested.resolve()
+    if (not requested.is_relative_to(device_dir) or not path.is_relative_to(device_dir)
+            or path.suffix != ".json"):
+        raise ValueError(f"校准文件必须位于 {role}/{device_name}/ 设备目录内，且使用 .json 后缀")
+    return device_dir, path
 
 
 def decode_sign_magnitude(raw: int, sign_bit: int) -> int:
@@ -57,7 +90,7 @@ def half_turn_offsets(positions: dict) -> dict:
 
 
 def validate_calibration(calibration: dict) -> None:
-    """拒绝错误关节、ID、编码或无效范围；这里只支持已确认的主臂。"""
+    """拒绝错误关节、ID、编码或无效范围；适用于已确认 ID 映射的主臂与从臂。"""
     if set(calibration) != set(MOTORS):
         raise ValueError("校准文件必须恰好包含已确认的六个关节")
     for name, motor_id in MOTORS.items():
@@ -161,3 +194,27 @@ HOMING_DIAGRAM = r"""
  ═══════════════════════════════════════════════════
                 table edge
 """
+
+# 来自 SOFollower 的夹爪参考姿态；保留 HOMING_DIAGRAM 作为主臂兼容名称。
+FOLLOWER_HOMING_DIAGRAM = r"""
+       ╭─────┬────────────────────┬──────╮ ◉╲═════╗   ← moveable claw
+       │     │      forearm       │  ▤▤  │╤══╲════╝   ← fixed claw
+       ╰┬───┬┴────────────────────┴──────┴┴═══════╝
+        │   │
+        │   │
+        │   │
+        │   │   upper arm
+        │   │
+        │   │
+        │   │
+   ╭────┴───┴────╮
+   │   base ◉    │
+   ╰──┬───────┬──╯
+  ╭───┴───────┴───╮
+  │▓▓▓ C-clamp ▓▓▓│
+  ╰───────────────╯
+ ═══════════════════════════════════════════════════
+                table edge
+"""
+
+HOMING_DIAGRAMS = {"leader": HOMING_DIAGRAM, "follower": FOLLOWER_HOMING_DIAGRAM}

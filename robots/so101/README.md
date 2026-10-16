@@ -27,7 +27,7 @@ robots/so101/
   README.md
   scripts/
     check_connection.py    # 只读检查指定舵机 ID
-    calibrate.py           # 现场交互确认的主臂校准
+    calibrate.py           # 按角色隔离的主从臂交互式校准
   model/
     LICENSE
     so101_new_calib.xml
@@ -64,7 +64,7 @@ robots/so101/
 
 XML 未显式设置物理时间步；此次加载得到 MuJoCo 默认值 0.002 秒，未改写模型。这只是加载与前向计算检查，不代表已经验证动态稳定性、接触、关节控制、实物一致性或图形显示；本轮未执行 `mj_step` 或渲染。
 
-## 主臂只读连接检查
+## 主从臂只读连接检查
 
 从项目根目录使用项目虚拟环境运行：
 
@@ -90,23 +90,24 @@ XML 未显式设置物理时间步；此次加载得到 MuJoCo 默认值 0.002 �
 
 配置主机串口波特率不是修改舵机 Baud_Rate 寄存器。入口不调用 LeRobot 高级连接初始化，不写 ID、模式、零点、限位、扭矩或目标位置；读到扭矩已开启也只报告。结束及异常时通过 finally 关闭已打开的串口，硬件读数只打印到终端，不保存到仓库。
 
-本节工具只执行连接检查，不执行运动或校准。主臂校准使用下面的独立交互入口；端口发现、实物到仿真关节映射和遥操作仍未实现。
+本节工具只执行连接检查，不执行运动或校准。主从臂校准使用下面的独立交互入口；现有主臂仿真跟随见文末，本轮不修改。
 
-## 主臂交互式校准
+## 主从臂交互式校准
 
-只针对用户已确认的主臂 ID：1 shoulder_pan、2 shoulder_lift、3 elbow_flex、4 wrist_flex、5 wrist_roll、6 gripper。使用现有 pyserial 和 Feetech SDK，不安装或导入 LeRobot，不连接仿真。此次只做语法、帮助和纯函数检查，尚未替用户执行硬件校准。
+只针对用户已确认的主臂或从臂 ID：1 shoulder_pan、2 shoulder_lift、3 elbow_flex、4 wrist_flex、5 wrist_roll、6 gripper。使用现有 pyserial 和 Feetech SDK，不安装或导入 LeRobot，不连接仿真。此次只做语法、帮助和离线替身检查，尚未替用户执行硬件校准。
 
 参考的实际本地调用链（同级 `../lerobot/`）：
 
 - `src/lerobot/scripts/lerobot_calibrate.py`：连接设备、调用校准、退出。
-- `src/lerobot/teleoperators/so_leader/so_leader.py`：`SOLeader.calibrate`、参考姿态图、wrist_roll 特殊处理；SO101Leader 是该实现的别名。
+- `src/lerobot/teleoperators/so_leader/so_leader.py`：`SOLeader.calibrate`、主臂手柄参考姿态图、wrist_roll 特殊处理；SO101Leader 是该实现的别名。
+- `src/lerobot/robots/so_follower/so_follower.py`：`SOFollower.calibrate`、从臂夹爪参考姿态图、wrist_roll 特殊处理；SO101Follower 是该实现的别名。
 - `src/lerobot/motors/motors_bus.py`：`reset_calibration`、`set_half_turn_homings`、`record_ranges_of_motion`、归一化。
 - `src/lerobot/motors/feetech/feetech.py` 与 `tables.py`：偏置公式、寄存器地址、符号位、校准读写和配置步骤。
 - `src/lerobot/motors/encoding_utils.py`、`src/lerobot/teleoperators/teleoperator.py`：符号幅值编码、JSON 保存与加载。
 
 本项目将寄存器访问和纯函数放在 `src/my_act/hardware/so101/calibration.py`，交互流程放在 `robots/so101/scripts/calibrate.py`，正常包导入，无 sys.path 修改。改编的算法、示意图保留 Hugging Face Apache-2.0 声明，许可证原文在 `src/my_act/hardware/so101/LICENSE`；新增了备份、显式确认、范围有效性检查和受限写入。
 
-### 现场运行
+### 主臂现场运行（兼容已有命令）
 
 先阅读 [SO101 官方校准说明与视频](https://huggingface.co/docs/lerobot/main/en/so101#calibration-video)。本地 SOLeader 还提供主臂参考姿态示意，入口会原样打印；[官方视频](https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/lerobot/calibrate_so101_2.mp4) 来自同一文档。按图示摆到各关节行程中部，不能自行用仿真 qpos=0 或旧校准的水平伸展零位替代。
 
@@ -116,15 +117,74 @@ XML 未显式设置物理时间步；此次加载得到 MuJoCo 默认值 0.002 �
 cd /home/lzh/projects/my-act && .venv/bin/python robots/so101/scripts/calibrate.py --port /dev/ttyACM0 --baudrate 1000000 --device-name leader01 --calibration-file robots/so101/calibration/leader/leader01/calibration.json
 ```
 
-`--calibration-file` 可指定该设备目录内的 JSON 路径；省略时使用上述默认结构。名称和路径区分 leader 角色及设备身份，不能与 follower 校准共用。路径、串口和设备名称不是自动发现的硬件身份，运行前须现场确认。
+`--role` 支持 leader / follower，默认 leader（主臂），帮助和启动输出均明确说明；旧主臂命令无需改写，也可显式加 `--role leader`。
+`--calibration-file` 可指定对应角色及设备目录内的 JSON 路径；省略时使用 `robots/so101/calibration/<role>/<设备名>/calibration.json`。主从校准不能共用。路径、串口和设备名称不是自动发现的硬件身份，运行前须现场确认。
 
 1. 若已有文件，输入 `reuse` 将旧文件偏置及限位写回舵机，或输入 `new` 重新采集；其他输入取消。复用也要经过备份和写入确认，不静默应用。
-2. 只读核对六个 ID、型号编号 777，并读取所有可能修改的寄存器原始字。先在 `calibration/leader/<设备名>/backups/<时间戳>/` 保存 `registers_before.json`；已有文件原样备份为 `previous_calibration.json`，不覆盖旧备份。
+2. 只读核对六个 ID、型号编号 777，并读取所有可能修改的寄存器原始字。先在校准目录下的 `<role>/<设备名>/backups/<时间戳>/` 保存 `registers_before.json`；已有文件原样备份为 `previous_calibration.json`，不覆盖旧备份。
 3. 查看原值与写入计划。若发现任何扭矩非零，先托住臂体，再输入 `DISABLE` 明确允许关闭；随后输入 `WRITE` 才会执行准备写入。不会开启扭矩或发送运动目标。
 4. 新校准时按官方图示摆参考姿态并保持不动，按回车清除旧偏置、恢复 0～4095 限位并读取当前位置。由 `当前位置 - 2047` 计算新偏置，显示后再输入 `WRITE` 写入。先清零并读回旧偏置，避免把旧偏置当成零或重复累加。
 5. 按提示开始只读范围采样。逐个手动缓慢移动 shoulder_pan、shoulder_lift、elbow_flex、wrist_flex 和 gripper，覆盖完整安全行程；不要用力顶止挡。`wrist_roll` 不采范围，也不要求绕转一圈，沿用上游范围 0～4095。采样最多约 20 Hz，终端最多 1 Hz 覆盖刷新，按回车结束。
 6. 范围必须在 0～4095 内且非退化；本工具另要求五个采集关节覆盖中心计数 2047 的两侧，以拒绝只采到半边的情况。若读数越界、发生跳变或范围不满足，不自动裁剪或修正。数值变化不证明完整行程，因此必须现场检查显示的范围，再输入 `SAVE` 确认写限位。
 7. 每次写入检查 SDK 状态并立即读回；所有写入完成后恢复原 Lock 值、确认扭矩仍为 0，才保存新校准文件。重校准通过临时完整文件替换，旧文件已备份；复用不重写原校准文件。
+
+### 从臂 follower01 的现场命令
+
+从臂已确认连接在 `/dev/ttyACM1`，设备名为 `follower01`，使用相同的关节 ID 映射。
+本轮只扩展工具并做离线验证，下面的交互式命令由用户在本机执行：
+
+```bash
+cd /home/lzh/projects/my-act
+.venv/bin/python robots/so101/scripts/calibrate.py \
+  --role follower \
+  --port /dev/ttyACM1 \
+  --baudrate 1000000 \
+  --device-name follower01 \
+  --calibration-file robots/so101/calibration/follower/follower01/calibration.json
+```
+
+运行前阅读 [SO101 官方 Calibrate → Follower 说明与参考姿态视频](https://huggingface.co/docs/lerobot/main/en/so101#calibrate)。
+入口按角色打印本地上游 `SOFollower` 的**夹爪参考姿态图**，不打印主臂手柄图。
+按从臂参考图将关节放到行程中部，保持不动后记录偏置；不能以仿真 qpos=0、
+主臂手柄姿态或旧模型的水平伸展姿态代替。
+
+源码核对结果如下，通用部分共用现有代码，不另复制从臂校准脚本：
+
+| 项目 | 主臂 SOLeader | 从臂 SOFollower |
+| --- | --- | --- |
+| 参考姿态 | 主臂手柄图 | 从臂固定爪/活动爪图 |
+| 偏置 | 清零旧偏置及限位后，当前位置减 2047 | 同一 Feetech 公式 |
+| 范围采集 | 手动采集前四个臂关节及 gripper | 同样五个关节；gripper 是从臂夹爪 |
+| wrist_roll | 不采范围，固定 0～4095 | 同样处理，不要求转一整圈 |
+| 完成保存 | leader/<设备名>/ | follower/<设备名>/ |
+
+从臂在每次准备关闭扭矩前会提示**先托住从臂**，确认后才写入。
+成功后会逐项回读并保存独立文件，六个关节扭矩保持关闭；**请继续托住或妥善放置从臂，再松手**。
+若中途取消或通信失败，按现有流程退出并显示备份位置，不自动恢复扭矩或回滚部分写入。
+
+本次校准保留已有写入白名单，不调用官方 follower 的高级 `configure()`：
+其中 PID 增益、夹爪电流/力矩保护等设置不属于本轮校准，不会带入。
+不写舵机 ID、波特率、目标位置，不自动开启扭矩。
+
+校准结果与备份分别位于：
+
+```text
+robots/so101/calibration/
+  leader/leader01/
+    calibration.json
+    backups/<时间戳>/
+  follower/follower01/
+    calibration.json
+    backups/<时间戳>/
+      registers_before.json
+      previous_calibration.json  # 仅在此前已有该从臂校准文件时保存
+```
+
+角色/设备路径校验在读取校准文件、打开串口之前完成。
+跨角色、跨设备以及通过符号链接跨目录的校准或备份路径会被拒绝。
+现有主臂文件及备份不会作为从臂输入或输出。JSON 保持原来的六关节字典格式；
+角色身份由目录及备份元信息表达，不自动迁移、复制或改写主臂文件。
+校准目录已被 Git 忽略；不要提交校准结果、备份或本机设备配置。
 
 ### 寄存器变更与失败行为
 
@@ -172,6 +232,37 @@ Present_Position 的符号位为 bit 15，是符号加幅值，不是普通 int1
 表格区分读取失败、读取成功但值不一致、全部一致，并输出具体字段差异。位置同时显示原始字和按 bit 15 符号幅值规则解码后的计数；它已包含内部偏置，不重复补偿。当前位置无需等于参考姿态，暂时超出采集范围只单独提示，不计为校准写入失败，也不转换为仿真角度。
 
 全部核验一致时退出码为 0，否则为 1。只读 PING/READ，不修复差异、不切换扭矩、不发送目标、不修改校准文件；finally 关闭串口。读数仅打印，不保存到受 Git 管理的文件。
+
+从臂校准成功后，先托住或妥善放置从臂，再用同一工具只读核验。
+将下方引号内的 `<本次校准时间戳>` 替换为刚才终端显示的实际备份目录，不自动选择最新备份：
+
+```bash
+cd /home/lzh/projects/my-act
+.venv/bin/python robots/so101/scripts/check_connection.py \
+  --role follower \
+  --port /dev/ttyACM1 \
+  --baudrate 1000000 \
+  --device-name follower01 \
+  --calibration-file robots/so101/calibration/follower/follower01/calibration.json \
+  --register-backup 'robots/so101/calibration/follower/follower01/backups/<本次校准时间戳>/registers_before.json'
+```
+
+核验也默认 `--role leader`。旧主臂命令不带 `--role`、`--device-name` 仍可使用；
+省略设备名时从校准路径的设备目录推断。显式指定设备名时必须与路径及备份一致。
+从臂必须指定 `--role follower`，否则其路径会在打开串口前被默认 leader 角色检查拒绝。
+
+### 本轮离线验证
+
+使用项目 `.venv`，未新增依赖或安装完整 LeRobot。检查语法和两个入口的 `--help`，
+并使用标准库 unittest 检查角色路径、设备名、跨角色备份拒绝、符号链接隔离、
+旧主臂命令、从臂参考图，以及替身总线下的从臂独立备份/保存流程：
+
+```bash
+.venv/bin/python -m unittest discover -s tests -p test_so101_calibration_roles.py -v
+```
+
+测试只使用临时目录和替身总线，真实串口被拦截；未执行真实校准或寄存器写入。
+不启动主从遥操作、不接摄像头、不采集数据，现有 `follow.py` 和仿真跟随逻辑保持不变。
 
 ## 六关节跟随检查
 
