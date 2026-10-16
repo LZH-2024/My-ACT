@@ -299,3 +299,55 @@ env -u PYOPENGL_PLATFORM MUJOCO_GL=glfw .venv/bin/python robots/so101/scripts/fo
 每周期 0.05 秒，当前物理步长 0.002 秒，因此每周期推进 25 步。目标按关节与执行器范围交集限幅，夹爪另限制为非负目标。腕俯仰 `wrist_flex` 的有效读数超过模型行程时，仅限幅并显示裁剪，不因模型限位退出；它超出采集范围时只显示“超采集范围=True”，仍要求计数有限且在当前单圈反馈约定 0～4095 内，并保留突变检查；校准文件不变。其他关节最多允许 0.10 rad 的轻微越界并显示裁剪，更多则停止。其他关节的采集边界允许 32 个计数的小偏差并提示。相邻采样角度跳变超过 0.35 rad 则停止，腕旋转跨越计数边界时不会把目标绕回另一端，通常在到达模型限位时已停止。这些是小幅跟随检查的保护阈值，不是实物性能标定结果。
 
 通信失败立即停止目标更新和物理推进，关闭串口与窗口，不补零、不使用旧读数、不自动重连。终端约每秒输出一次六关节信息。有限无窗口检查使用 `--headless --steps 40`，会直接开始；默认窗口模式等待空格才推进物理仿真。该入口不采集数据、不训练、不执行抓取任务评测。
+
+## 真实主臂跟随真实从臂
+
+入口为 `robots/so101/scripts/teleoperate_real.py`，可复用实现为 `src/my_act/hardware/so101/real_teleop.py`。原 `follow.py` 仍用于仿真，命令与行为不变。**真实运动尚未验证**；工具开发与离线检查通过不代表从臂已经校准。本次开发时 `follower/follower01/calibration.json` 不存在。
+
+### 先完成从臂校准与只读核验
+
+由用户现场确认连接的是从臂、托住臂体后执行已有校准工具；不要把主臂校准复制为从臂校准：
+
+```bash
+cd /home/lzh/projects/my-act
+.venv/bin/python robots/so101/scripts/calibrate.py --role follower --port /dev/ttyACM1 --baudrate 1000000 --device-name follower01 --calibration-file robots/so101/calibration/follower/follower01/calibration.json
+```
+
+按工具的参考图与确认提示完成校准，校准完成后扭矩保持关闭。需要核对原 Phase 全部位及 Lock 恢复情况时，使用前述 `check_connection.py --role follower` 并显式提供本次实际备份；不要随意选旧备份。
+
+随后执行双臂一次只读预览。此入口不要求历史备份，逐关节读取 ID、型号、工作模式、扭矩、Homing_Offset、最小/最大限位以及 Phase 必要反馈位。两份文件须分别位于正确角色和设备目录，偏置和范围须与各自硬件一致，主从扭矩都须关闭；缺失或不一致立即退出，不自动写回。这里的路径角色不是硬件唯一身份，用户仍须确认串口实际对应哪条臂。
+
+```bash
+.venv/bin/python robots/so101/scripts/teleoperate_real.py --leader-port /dev/ttyACM0 --follower-port /dev/ttyACM1 --leader-name leader01 --follower-name follower01 --leader-calibration-file robots/so101/calibration/leader/leader01/calibration.json --follower-calibration-file robots/so101/calibration/follower/follower01/calibration.json --baudrate 1000000 --preview
+```
+
+预览展示主臂映射目标、从臂当前姿态、差值及限制后的目标计数，然后关闭串口；不预写目标、不启用或关闭扭矩。文件检查在打开串口前完成，两个端口的真实设备号不能相同。
+
+### 动作转换与限制
+
+依据同级 LeRobot 的 `teleoperators/so_leader/so_leader.py`、`robots/so_follower/so_follower.py`、`motors/motors_bus.py`、`motors/feetech/tables.py` 和 `robots/utils.py`。主从统一使用 `use_degrees=True` 的约定：
+
+- 五个臂关节：`度 = (主臂反馈计数 - 主臂范围中点) × 360 / 4095`；`从臂目标计数 = int(度 × 4095 / 360 + 从臂范围中点)`。
+- 夹爪：主臂采集范围映射为 0～100% 开度，再用从臂自己的夹爪范围反归一化；超出主臂采集开度的部分按 LeRobot 规则限幅。
+- 两臂都使用现有校准字段验证，当前只接受 `drive_mode=0`；不是 Operating_Mode，也不引入额外反向开关。反馈已包含内部偏置，不再次减 homing_offset。不使用 MuJoCo 弧度、模型限位或直接复制主臂原始计数。
+- 从臂目标先限制到其校准且回读一致的范围，再限制到当前从臂反馈附近。`--max-relative-target-deg 2` 表示五个臂关节每次目标离当前反馈最多 2 度；`--max-gripper-target-percent 2` 表示夹爪最多 2 个百分点。最终计数向允许区间内部取整。相同反馈下重复规划不会继续积累目标。
+- 这些参数是反馈相对位置限制，不是上一条命令的变化量、保证的速度、力矩限制或碰撞规避。20 Hz 是期望频率；逐 ID 响应与回读有开销，终端显示实际频率。
+- 单圈读数必须完整、有限、为 0～4095 的整数；相邻采样跳变超过 512 计数（约 45° 编码器角）时停止。主臂超过采集边界单独提示；从臂当前反馈若已超出自身限位则拒绝继续。腕旋转跨圈不会绕回发送整圈跳变。
+
+改编算法保留 Hugging Face Apache-2.0 声明，许可证见 `src/my_act/hardware/so101/LICENSE`。只复用现有 SDK，不导入完整 LeRobot，也不调用其会写 PID、加速度、电流保护等参数的 `configure()`；已有舵机参数不被此工具修改。通信写入仅限从臂 Goal_Position（42，2 字节）与 Torque_Enable（40，1 字节），不写配置锁、偏置或限位。
+
+### 现场启动与停止
+
+完成校准及预览后，由用户在交互终端现场执行：
+
+```bash
+.venv/bin/python robots/so101/scripts/teleoperate_real.py --leader-port /dev/ttyACM0 --follower-port /dev/ttyACM1 --leader-name leader01 --follower-name follower01 --leader-calibration-file robots/so101/calibration/leader/leader01/calibration.json --follower-calibration-file robots/so101/calibration/follower/follower01/calibration.json --baudrate 1000000 --frequency 20 --max-relative-target-deg 2 --max-gripper-target-percent 2
+```
+
+1. 程序先只读展示姿态差异。确认实物身份、周围空间足够并托稳从臂，输入 `START` 才授权写入；其他输入取消。禁止重定向输入来自动确认。
+2. START 后重新核验，读取从臂最新位置，预写相同目标并回读，再逐个开启从臂扭矩。预写后若姿态移动超过 4 计数（约 0.35° 编码器角）则停止；启用过程中发生错误也尽力关闭全部从臂扭矩。逐次反馈相对限制从第一条跟随命令开始生效，逐步接近主臂姿态。
+3. 正常停止：按回车或 Ctrl+C，停止发送新目标，暂时保持最后目标；先托住从臂，再输入 `OFF` 关闭扭矩。六个关节均须写入并回读确认；主臂始终只读。
+4. 通信异常、终端 EOF/SIGHUP/SIGTERM、启动或关闭确认期间中断：停止新运动目标，尽力逐 ID 关闭从臂扭矩，逐项报告失败；从臂可能失去支撑。主臂扭矩不会被修改。若尚未接管扭矩，不会擅自关闭原本已经开启的从臂。
+5. 断连时无法保证关扭矩，SIGKILL、进程崩溃或断电也无法依赖 Python 清理；不能把程序退出等同于硬件已安全停止。正常及异常路径均尝试释放两条串口，不无限重连或重试。
+
+本轮只做代码与离线模拟通信检查，未打开真实串口、未启用扭矩、未发送真实位置目标，不包含摄像头、数据采集或训练。
